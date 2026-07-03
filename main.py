@@ -117,6 +117,9 @@ def parse_query_with_llm(user_query):
     Example 3: "Show me swimming pools in rich neighborhoods"
     Output: {{"geocoding": null, "demography": "rich neighborhoods", "visual_query": "swimming pools"}}
 
+    Example 4: "Rivers flowing near a farmland"
+    Output: {{"geocoding": null, "demography": "null", "visual_query": "Rivers flowing near a farmland"}}
+
     User Query: "{user_query}"
     Output:
     """
@@ -342,5 +345,5 @@ if __name__ == "__main__":
     demo_gdf, ae_embeddings, clip_model = load_demographic_assets()
     
     # Complex test query
-    sample_query = "Farmlands in regions with high poverty rates"
+    sample_query = "Rivers flowing near a farmland near the sasha-trinity national forest"
     run_pipeline(sample_query, demo_gdf, ae_embeddings, clip_model)

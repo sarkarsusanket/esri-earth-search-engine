@@ -1,0 +1,16 @@
+/data
+env/
+*/results/
+results/
+*.npy
+*.parquet
+*.shp
+*.shx
+*.dbf
+*.prj
+*.sbn
+*.sbx
+*.cpg
+*.png
+*.pth
+*.geojson
