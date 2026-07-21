@@ -1,7 +1,3 @@
-"""
-Dataset utilities for training a CLIP-style model from a parquet file
-containing raw image bytes and text captions.
-"""
 import io
 import logging
 
@@ -12,18 +8,10 @@ from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
 
-# Some corrupt/truncated images shouldn't crash a multi-hour training run.
 Image.MAX_IMAGE_PIXELS = None
 
 
 class ParquetImageTextDataset(Dataset):
-    """Reads a parquet file with an image-bytes column and a caption column.
-
-    The parquet is loaded fully into memory as a pandas DataFrame (only the
-    two needed columns), which is fine up to a few million rows. For larger
-    datasets, swap this out for a pyarrow.dataset streaming reader.
-    """
-
     def __init__(
         self,
         parquet_path: str,
@@ -47,14 +35,12 @@ class ParquetImageTextDataset(Dataset):
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
         img_bytes = row[self.image_col]
-        # Parquet may store bytes directly, or as a dict like {"bytes": ...}
-        # (common when exported from HF datasets' Image feature).
         if isinstance(img_bytes, dict) and "bytes" in img_bytes:
             img_bytes = img_bytes["bytes"]
 
         try:
             image = self._load_image(img_bytes)
-        except Exception as e:  # noqa: BLE001 - skip bad rows, don't crash training
+        except Exception as e:
             logger.warning("Failed to decode image at row %d: %s", idx, e)
             return self.__getitem__((idx + 1) % len(self))
 
@@ -63,12 +49,6 @@ class ParquetImageTextDataset(Dataset):
 
 
 class Collator:
-    """Turns a list of (PIL.Image, caption) into model-ready tensors.
-
-    Wrapped in a class (rather than a closure) so it's picklable for
-    multi-worker DataLoaders.
-    """
-
     def __init__(self, processor, tokenizer, max_length: int = 77):
         self.processor = processor
         self.tokenizer = tokenizer
@@ -96,7 +76,14 @@ class Collator:
         }
 
 
-def build_dataloader(
+def split_dataset(dataset, val_ratio: float = 0.2, seed: int = 42):
+    val_size = int(len(dataset) * val_ratio)
+    train_size = len(dataset) - val_size
+    generator = torch.Generator().manual_seed(seed)
+    return torch.utils.data.random_split(dataset, [train_size, val_size], generator=generator)
+
+
+def build_dataloaders(
     parquet_path: str,
     processor,
     tokenizer,
@@ -105,19 +92,43 @@ def build_dataloader(
     batch_size: int = 256,
     num_workers: int = 0,
     max_length: int = 77,
-    shuffle: bool = True,
-    drop_last: bool = True,
+    val_ratio: float = 0.2,
+    seed: int = 42,
 ):
     dataset = ParquetImageTextDataset(parquet_path, image_col, caption_col)
     collator = Collator(processor, tokenizer, max_length)
-    loader = torch.utils.data.DataLoader(
-        dataset,
+
+    train_dataset, val_dataset = split_dataset(dataset, val_ratio, seed)
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=True,
         num_workers=num_workers,
         collate_fn=collator,
-        drop_last=drop_last,
+        drop_last=True,
         pin_memory=True,
         persistent_workers=num_workers > 0,
     )
-    return dataset, loader
+
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=max(1, num_workers // 2),
+        collate_fn=collator,
+        drop_last=False,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+    )
+
+    logger.info(
+        "Split %d examples into train=%d val=%d (%.1f/%.1f)",
+        len(dataset),
+        len(train_dataset),
+        len(val_dataset),
+        (1 - val_ratio) * 100,
+        val_ratio * 100,
+    )
+
+    return train_dataset, train_loader, val_loader

@@ -1,14 +1,11 @@
 """
-End-to-end trainer for VampireCLIP.
+End-to-end trainer for VLM (BERT + DINO with contrastive learning).
 
 Usage:
     python train.py \
         --parquet_path data/train.parquet \
-        --image_col image --caption_col caption \
-        --clip_name openai/clip-vit-base-patch32 \
-        --proj_dim 256 \
         --batch_size 256 --epochs 10 --lr 1e-4 \
-        --output_dir runs/vampire_clip
+        --output_dir runs/vlm
 """
 import argparse
 import logging
@@ -21,9 +18,9 @@ import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
-from data import build_dataloader
+from data import build_dataloaders
 from losses import batch_retrieval_accuracy, clip_infonce_loss
-from model import VampireCLIP
+from model import VLM
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,18 +30,18 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Train a CLIP-style model end to end.")
+    p = argparse.ArgumentParser(description="Train a VLM (TinyBERT+DINO) with contrastive learning.")
     # Data
     p.add_argument("--parquet_path", type=str, required=True)
-    p.add_argument("--val_parquet_path", type=str, default=None)
     p.add_argument("--image_col", type=str, default="image")
     p.add_argument("--caption_col", type=str, default="caption")
     p.add_argument("--max_length", type=int, default=77)
     p.add_argument("--num_workers", type=int, default=10)
+    p.add_argument("--val_ratio", type=float, default=0.2)
     # Model
-    p.add_argument("--clip_name", type=str, default="openai/clip-vit-base-patch32")
+    p.add_argument("--text_model_name", type=str, default="prajjwal1/bert-tiny")
+    p.add_argument("--vision_model_name", type=str, default="facebook/dino-vits16")
     p.add_argument("--proj_dim", type=int, default=256)
-    p.add_argument("--freeze_backbone", action="store_true")
     # Optimization
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--epochs", type=int, default=10)
@@ -57,7 +54,7 @@ def parse_args():
     p.add_argument("--patience", type=int, default=5)
     p.add_argument("--verbose", type=int, default=1, choices=[0, 1, 2])
     # Bookkeeping
-    p.add_argument("--output_dir", type=str, default="runs/clip")
+    p.add_argument("--output_dir", type=str, default="runs/vlm")
     p.add_argument("--log_every", type=int, default=50)
     p.add_argument("--resume_from", type=str, default=None)
     p.add_argument("--seed", type=int, default=42)
@@ -131,16 +128,23 @@ def main():
     print(device)
     logger.warning("Using device: %s", device)
 
-    # --- Model + matching preprocessing, initialized from pretrained CLIP ---
-    model, processor, tokenizer = VampireCLIP.build_with_processor(
-        clip_name=args.clip_name,
+    model, processor, tokenizer = VLM.build_with_processor(
+        text_model_name=args.text_model_name,
+        vision_model_name=args.vision_model_name,
         proj_dim=args.proj_dim,
-        freeze_backbone=args.freeze_backbone,
     )
     model.to(device)
 
-    # --- Data ---
-    train_dataset, train_loader = build_dataloader(
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.warning(
+        "Model params: %d total, %d trainable (%.2f%%)",
+        total_params,
+        trainable_params,
+        100 * trainable_params / total_params if total_params > 0 else 0,
+    )
+
+    train_dataset, train_loader, val_loader = build_dataloaders(
         args.parquet_path,
         processor,
         tokenizer,
@@ -149,36 +153,20 @@ def main():
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         max_length=args.max_length,
-        shuffle=True,
-        drop_last=True,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
     )
-
-    val_loader = None
-    if args.val_parquet_path:
-        _, val_loader = build_dataloader(
-            args.val_parquet_path,
-            processor,
-            tokenizer,
-            image_col=args.image_col,
-            caption_col=args.caption_col,
-            batch_size=args.batch_size,
-            num_workers=max(1, args.num_workers // 2),
-            max_length=args.max_length,
-            shuffle=False,
-            drop_last=False,
-        )
 
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * args.epochs
     logger.warning(
-        "Train examples: %d | steps/epoch: %d | total steps: %d",
+        "Train examples: %d | Val examples: %d | steps/epoch: %d | total steps: %d",
         len(train_dataset),
+        len(val_loader.dataset),
         steps_per_epoch,
         total_steps,
     )
 
-    # --- Optimizer / schedule ---
-    # Common CLIP recipe: no weight decay on biases, norms, or the logit_scale.
     decay, no_decay = [], []
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -212,7 +200,6 @@ def main():
         start_epoch = ckpt["epoch"]
         global_step = ckpt["step"]
 
-    # --- Train loop ---
     model.train()
     best_loss = float("inf")
     patience_counter = 0
@@ -278,22 +265,12 @@ def main():
             "Epoch %d finished in %.1fs", epoch, time.time() - epoch_start
         )
 
-        if val_loader is not None:
-            val_loss, val_acc = evaluate(model, val_loader, device)
-            logger.warning(
-                "Epoch %d | val_loss %.4f | val_acc %.3f", epoch, val_loss, val_acc
-            )
-            current_loss = val_loss
-        else:
-            current_loss = epoch_loss / epoch_batches
-            current_acc = epoch_acc / epoch_batches
-            if args.verbose >= 1:
-                logger.info(
-                    "Epoch %d | train_loss %.4f | train_acc %.3f",
-                    epoch, current_loss, current_acc,
-                )
+        val_loss, val_acc = evaluate(model, val_loader, device)
+        logger.warning(
+            "Epoch %d | val_loss %.4f | val_acc %.3f", epoch, val_loss, val_acc
+        )
+        current_loss = val_loss
 
-        # Best checkpoint + early stopping
         if current_loss < best_loss:
             best_loss = current_loss
             patience_counter = 0

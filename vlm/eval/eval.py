@@ -1,5 +1,5 @@
 """
-Zero-shot top-1 accuracy benchmark for a trained VampireCLIP checkpoint on
+Zero-shot top-1 accuracy benchmark for a trained VLM checkpoint on
 standard remote-sensing scene classification datasets:
 
     OPTIMAL31, RSC11, RSICB128, WHU-RS19, RSSCN7 (aka RS2800/RSSCN7), CLRS
@@ -55,7 +55,7 @@ from torchvision.datasets import ImageFolder
 
 import sys
 sys.path.append(rf"D:\Code\query-earth\vlm")
-from model import VampireCLIP
+from model import VLM
 
 logging.basicConfig(
     level=logging.INFO,
@@ -124,7 +124,7 @@ class EvalCollate:
 
 @torch.no_grad()
 def build_zero_shot_classifier(
-    model: VampireCLIP,
+    model: VLM,
     tokenizer,
     classnames: List[str],
     templates: List[str],
@@ -153,7 +153,7 @@ def build_zero_shot_classifier(
 
 @torch.no_grad()
 def evaluate_dataset(
-    model: VampireCLIP,
+    model: VLM,
     processor,
     tokenizer,
     root: str,
@@ -213,8 +213,9 @@ def load_model_from_checkpoint(checkpoint_path: str, device):
     ckpt = torch.load(checkpoint_path, map_location=device)
     train_args = ckpt["args"]
 
-    model, processor, tokenizer = VampireCLIP.build_with_processor(
-        clip_name=train_args["clip_name"],
+    model, processor, tokenizer = VLM.build_with_processor(
+        text_model_name=train_args.get("text_model_name", "prajjwal1/bert-tiny"),
+        vision_model_name=train_args.get("vision_model_name", "facebook/dino-vits16"),
         proj_dim=train_args["proj_dim"],
     )
     model.load_state_dict(ckpt["model_state_dict"])
