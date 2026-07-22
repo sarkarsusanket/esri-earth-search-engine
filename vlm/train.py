@@ -19,7 +19,13 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 
 from data import build_dataloaders
-from losses import batch_retrieval_accuracy, clip_infonce_loss
+from losses import (
+    batch_retrieval_accuracy,
+    binary_infonce_loss,
+    binary_siglip_loss,
+    clip_infonce_loss,
+    siglip_loss,
+)
 from model import VLM
 
 logging.basicConfig(
@@ -42,6 +48,11 @@ def parse_args():
     p.add_argument("--text_model_name", type=str, default="prajjwal1/bert-tiny")
     p.add_argument("--vision_model_name", type=str, default="facebook/dino-vits16")
     p.add_argument("--proj_dim", type=int, default=256)
+    p.add_argument("--quantisation", type=str, default=None,
+                   choices=["float16", "int8", "int4", "binary"],
+                   help="Quantize projected embeddings. binary uses Hamming distance.")
+    p.add_argument("--siglip", action="store_true",
+                   help="Use SigLIP sigmoid loss instead of InfoNCE")
     # Optimization
     p.add_argument("--batch_size", type=int, default=256)
     p.add_argument("--epochs", type=int, default=10)
@@ -73,7 +84,7 @@ def cosine_warmup_scheduler(optimizer, warmup_steps: int, total_steps: int):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, siglip: bool = False):
     model.eval()
     total_loss, total_acc, n_batches = 0.0, 0.0, 0
     for batch in loader:
@@ -82,9 +93,26 @@ def evaluate(model, loader, device):
         attention_mask = batch["attention_mask"].to(device, non_blocking=True)
 
         image_embeds, text_embeds = model(pixel_values, input_ids, attention_mask)
-        loss, logits = clip_infonce_loss(
-            image_embeds, text_embeds, model.logit_scale.exp()
-        )
+
+        if siglip:
+            if model.quantisation == "binary":
+                loss, logits = binary_siglip_loss(
+                    image_embeds, text_embeds, model.logit_scale.exp(), model.logit_bias
+                )
+            else:
+                loss, logits = siglip_loss(
+                    image_embeds, text_embeds, model.logit_scale.exp(), model.logit_bias
+                )
+        else:
+            if model.quantisation == "binary":
+                loss, logits = binary_infonce_loss(
+                    image_embeds, text_embeds, model.logit_scale.exp()
+                )
+            else:
+                loss, logits = clip_infonce_loss(
+                    image_embeds, text_embeds, model.logit_scale.exp()
+                )
+
         total_loss += loss.item()
         total_acc += batch_retrieval_accuracy(logits)
         n_batches += 1
@@ -132,6 +160,7 @@ def main():
         text_model_name=args.text_model_name,
         vision_model_name=args.vision_model_name,
         proj_dim=args.proj_dim,
+        quantisation=args.quantisation,
     )
     model.to(device)
 
@@ -224,9 +253,24 @@ def main():
                 image_embeds, text_embeds = model(
                     pixel_values, input_ids, attention_mask
                 )
-                loss, logits = clip_infonce_loss(
-                    image_embeds, text_embeds, model.logit_scale.exp()
-                )
+                if args.siglip:
+                    if model.quantisation == "binary":
+                        loss, logits = binary_siglip_loss(
+                            image_embeds, text_embeds, model.logit_scale.exp(), model.logit_bias
+                        )
+                    else:
+                        loss, logits = siglip_loss(
+                            image_embeds, text_embeds, model.logit_scale.exp(), model.logit_bias
+                        )
+                else:
+                    if model.quantisation == "binary":
+                        loss, logits = binary_infonce_loss(
+                            image_embeds, text_embeds, model.logit_scale.exp()
+                        )
+                    else:
+                        loss, logits = clip_infonce_loss(
+                            image_embeds, text_embeds, model.logit_scale.exp()
+                        )
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -265,7 +309,7 @@ def main():
             "Epoch %d finished in %.1fs", epoch, time.time() - epoch_start
         )
 
-        val_loss, val_acc = evaluate(model, val_loader, device)
+        val_loss, val_acc = evaluate(model, val_loader, device, siglip=args.siglip)
         logger.warning(
             "Epoch %d | val_loss %.4f | val_acc %.3f", epoch, val_loss, val_acc
         )

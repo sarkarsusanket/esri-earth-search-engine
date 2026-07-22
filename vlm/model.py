@@ -17,8 +17,13 @@ class VLM(nn.Module):
         proj_dim: int = 256,
         logit_scale_init: float = 1 / 0.07,
         logit_scale_max: float = 100.0,
+        quantisation: str | None = None,
     ):
         super().__init__()
+
+        if quantisation is not None and quantisation not in ("float16", "int8", "int4", "binary"):
+            raise ValueError(f"quantisation must be one of float16, int8, int4, binary, got {quantisation}")
+        self.quantisation = quantisation
 
         self.text_encoder = BertModel.from_pretrained(text_model_name)
         text_dim = self.text_encoder.config.hidden_size
@@ -37,6 +42,24 @@ class VLM(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.tensor(math.log(logit_scale_init)))
         self.logit_scale_max = math.log(logit_scale_max)
+        self.logit_bias = nn.Parameter(torch.zeros(1))
+
+    def _quantize(self, x: torch.Tensor) -> torch.Tensor:
+        if self.quantisation is None:
+            return x
+        elif self.quantisation == "float16":
+            return x.to(torch.float16)
+        elif self.quantisation == "int8":
+            abs_max = x.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
+            x_q = (x / abs_max * 127).round().clamp(-128, 127)
+            return x_q / 127 * abs_max
+        elif self.quantisation == "int4":
+            abs_max = x.abs().max(dim=-1, keepdim=True)[0].clamp(min=1e-6)
+            x_q = (x / abs_max * 7).round().clamp(-7, 7)
+            return x_q / 7 * abs_max
+        elif self.quantisation == "binary":
+            return x.sign()
+        raise ValueError(f"Unknown quantisation: {self.quantisation}")
 
     @classmethod
     def build_with_processor(
@@ -44,12 +67,14 @@ class VLM(nn.Module):
         text_model_name: str = "prajjwal1/bert-tiny",
         vision_model_name: str = "facebook/dino-vits16",
         proj_dim: int = 256,
+        quantisation: str | None = None,
         **kwargs,
     ):
         model = cls(
             text_model_name=text_model_name,
             vision_model_name=vision_model_name,
             proj_dim=proj_dim,
+            quantisation=quantisation,
             **kwargs,
         )
         tokenizer = BertTokenizer.from_pretrained(text_model_name)
@@ -65,7 +90,8 @@ class VLM(nn.Module):
         outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
         feats = outputs.pooler_output
         feats = self.text_proj(feats)
-        if normalize:
+        feats = self._quantize(feats)
+        if normalize and self.quantisation != "binary":
             feats = F.normalize(feats, dim=-1)
         return feats
 
@@ -73,7 +99,8 @@ class VLM(nn.Module):
         outputs = self.vision_encoder(pixel_values=pixel_values)
         feats = outputs.last_hidden_state[:, 0, :]
         feats = self.vision_proj(feats)
-        if normalize:
+        feats = self._quantize(feats)
+        if normalize and self.quantisation != "binary":
             feats = F.normalize(feats, dim=-1)
         return feats
 

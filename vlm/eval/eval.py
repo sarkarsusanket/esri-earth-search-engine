@@ -218,7 +218,7 @@ def load_model_from_checkpoint(checkpoint_path: str, device):
         vision_model_name=train_args.get("vision_model_name", "facebook/dino-vits16"),
         proj_dim=train_args["proj_dim"],
     )
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=False)
     model.to(device)
     model.eval()
     logger.info(

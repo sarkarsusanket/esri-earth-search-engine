@@ -32,6 +32,35 @@ class ParquetImageTextDataset(Dataset):
     def _load_image(self, img_bytes: bytes) -> Image.Image:
         return Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
+    def _clean_text(text: str) -> str:
+        if not text:
+            return ""
+
+        # Preserve leading quotes/asterisks (e.g., '*"', '"')
+        wrapper_match = re.match(r'^([\s*"\'\`]*)', text)
+        prefix_wrapper = wrapper_match.group(1) if wrapper_match else ""
+        core_text = text[len(prefix_wrapper):]
+
+        # Pattern breakdown:
+        # 1. Optional leading articles: "this", "the", "a", "an"
+        # 2. Optional descriptors: "aerial", "dense", "close-up", etc.
+        # 3. Noun: "image", "view", "shot", "photo", "picture", "depiction", etc.
+        # 4. Action verb: "shows", "depicts", "captures", "displays", "features", "presents", "illustrates"
+        # 5. Optional trailing article: "a", "an", "the"
+        intro_pattern = r'^(?:(?:this|the|a|an)\s+)?(?:[\w-]+\s+)?(?:image|view|shot|photo|photograph|picture|graphic|illustration|diagram)\s+(?:shows|depicts|captures|displays|features|presents|illustrates|contains|reveals)\s+(?:(?:a|an|the)\s+)?'
+
+        # Strip prefix phrase (case-insensitive)
+        cleaned_core = re.sub(intro_pattern, "", core_text, flags=re.IGNORECASE)
+
+        # Clean up double spaces and trailing edges
+        cleaned_core = re.sub(r'\s+', ' ', cleaned_core).strip()
+
+        # Capitalize the new starting word
+        if cleaned_core:
+            cleaned_core = cleaned_core[0].upper() + cleaned_core[1:]
+
+        return prefix_wrapper + cleaned_core
+
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
         img_bytes = row[self.image_col]
@@ -44,7 +73,7 @@ class ParquetImageTextDataset(Dataset):
             logger.warning("Failed to decode image at row %d: %s", idx, e)
             return self.__getitem__((idx + 1) % len(self))
 
-        caption = str(row[self.caption_col])
+        caption = str(self._clean_text(row[self.caption_col]))
         return image, caption
 
 
