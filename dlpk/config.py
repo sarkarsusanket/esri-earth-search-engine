@@ -34,7 +34,7 @@ def _find_first(directory: str, patterns) -> str:
 
 
 # ------------------------------------------------------------------
-# Demographic similarity assets
+# Demography assets
 # ------------------------------------------------------------------
 DEMO_PARQUET_PATH = os.path.join(EMBEDDINGS_DIR, "demography-emb.parquet")
 
@@ -49,7 +49,7 @@ TEXT_EMBED_MODEL = _LOCAL_EMBEDDER_DIR if os.path.isdir(_LOCAL_EMBEDDER_DIR) els
 TEXT_EMBED_DIM = 384  # all-MiniLM-L6-v2 output dim. Update this if you swap the embedder later.
 
 # ------------------------------------------------------------------
-# Vision (TurboQuant) assets
+# Vision assets
 # ------------------------------------------------------------------
 VISION_INDEX_DIRS = {
     "low": os.path.join(EMBEDDINGS_DIR, "lowres-vision"),
@@ -65,6 +65,12 @@ CLIP_VISION_MODEL_NAME = "ViT-L-14"
 CLIP_VISION_PRETRAINED = "laion2b_s32b_b82k"
 
 # ------------------------------------------------------------------
+# POI assets
+# ------------------------------------------------------------------
+POI_EMBEDDING_PATH = os.path.join(EMBEDDINGS_DIR, "poi_embeddings.parquet")
+POI_PATH = os.path.join(EMBEDDINGS_DIR, "poi.parquet")
+
+# ------------------------------------------------------------------
 # Local query router (llama.cpp GGUF model, replaces the previous Ollama
 # router dependency)
 # ------------------------------------------------------------------
@@ -78,3 +84,4 @@ ROUTER_N_THREADS = max(1, (os.cpu_count() or 4) - 1)
 DEMO_TOP_K_DEFAULT = 30
 VISION_TOP_N_DEFAULT = 100
 VISION_NPROBE_DEFAULT = 24  # IVF clusters probed per global (non-spatially-filtered) vision search
+POI_THRESHOLD = 0.48 # Threshhold for poi search

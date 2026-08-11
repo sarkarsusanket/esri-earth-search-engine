@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 import config
 
-SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool"}
+SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "poi"}
 SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
 
@@ -48,6 +48,17 @@ the full name):
                                        prior variable to search within — omit
                                        it (single argument) to search the
                                        whole study area. `query` is a string.
+
+  poi(region?, query)           (P)   point-of-interest search over discrete
+                                       amenity classes, e.g. "emergency
+                                       services", "coffee shops",
+                                       "restaurants". `region` is an optional
+                                       prior variable to search within — omit
+                                       it (single argument) to search the
+                                       whole study area. `query` is a string.
+                                       Use this for any request about named/
+                                       classified places and services (banks,
+                                       schools, parks, hospitals, fuel, etc.).
 
   vision-high(region?, query)   (VH)  visual search for SMALL/fine objects:
                                        pools, vehicles, structures.
@@ -80,6 +91,8 @@ Syntax rules:
 - Write ONLY the program. No markdown fences, no comments, no explanation,
   no trailing text — just the lines.
 
+You have to be smart about what needs to be directed into vision and what get to go into POI.
+
 Example:
 Query: "Find circular farmlands in relatively poorer regions"
 Output:
@@ -95,6 +108,15 @@ Example:
 Query: "Find parking lots"
 Output:
 output = vision-high("parking lots")
+
+Example:
+Query: "Find all the emergency services near highway interections within 5 kms of LA"
+Output:
+a = geocode("Los Angeles")
+b = buffer(a, 5)
+c = vision-low(b, "highway inetrsection")
+d = buffer(c, 2)
+output = poi(d, "emergency services")
 
 Example:
 Query: "Find residential homes with pools in the poorer regions of downtown LA"
@@ -113,7 +135,7 @@ d = buffer(c, 0.2)
 e = vision-high(b, "solar farms")
 output = difference(e, d)
 
-Remember: only geocode, demo, vision-high, vision-low, buffer, intersection,
+Remember: only geocode, demo, poi, vision-high, vision-low, buffer, intersection,
 union, difference, add are allowed. Write only the program lines. Solve the problem in steps using the tools available to you.
 """
 
@@ -174,6 +196,7 @@ class QueryPlan:
 _FUNC_MAP = {
     "geocode": ("geocode", None, None),
     "demo": ("demo", None, None),
+    "poi": ("poi", None, None),
     "vision-high": ("vision", "high", None),
     "vision-low": ("vision", "low", None),
     "buffer": ("tool", None, "buffer"),
@@ -247,7 +270,7 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         parameters["target"] = text_args[0]
         inputs = []
 
-    elif operation == "demo" or (operation == "vision"):
+    elif operation == "demo" or operation == "poi" or (operation == "vision"):
         if not text_args:
             raise ValueError(f"{func_name}() needs a string query: {line!r}")
         parameters["target"] = text_args[0]

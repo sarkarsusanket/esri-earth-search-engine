@@ -48,6 +48,8 @@ class QueryEarth:
         demo_gdf, ae_embeddings, demo_model, text_embedder = models.load_demographic_assets()
         vision_encoder = models.VisionEncoder()
 
+        poi_gdf, poi_embedding_df = models.load_poi_assets()
+
         vision_indices = {}
         for resolution, folder in config.VISION_INDEX_DIRS.items():
             if os.path.isdir(folder) and os.path.exists(os.path.join(folder, "meta.json")):
@@ -55,7 +57,10 @@ class QueryEarth:
             else:
                 print(f"No vision index found for resolution '{resolution}' at {folder} (skipping).")
 
-        self.context = PipelineContext(demo_gdf, ae_embeddings, demo_model, text_embedder, vision_encoder, vision_indices)
+        self.context = PipelineContext(
+            demo_gdf, ae_embeddings, demo_model, text_embedder,
+            vision_encoder, vision_indices, poi_gdf, poi_embedding_df,
+        )
         self.executor = PipelineExecutor(self.context)
 
         query_parser.warmup()
