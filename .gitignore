@@ -17,3 +17,10 @@ results/
 
 *.pt
 */runs
+
+embeddings/
+weights/
+*/__pycache__/
+
+*.zip
+*.html

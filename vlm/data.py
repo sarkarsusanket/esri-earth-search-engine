@@ -1,5 +1,6 @@
 import io
 import logging
+import re 
 
 import pandas as pd
 import torch
@@ -32,7 +33,7 @@ class ParquetImageTextDataset(Dataset):
     def _load_image(self, img_bytes: bytes) -> Image.Image:
         return Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
-    def _clean_text(text: str) -> str:
+    def _clean_text(self, text: str) -> str:
         if not text:
             return ""
 

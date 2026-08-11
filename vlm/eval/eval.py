@@ -53,6 +53,9 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
 
+import warnings
+warnings.filterwarnings("ignore")
+
 import sys
 sys.path.append(rf"D:\Code\query-earth\vlm")
 from model import VLM
@@ -70,16 +73,7 @@ DATASET_KEYS = ["Optimal31", "RSC11", "RSICB128"]
 # Prompt templates adapted from CLIP's zero-shot template set for
 # aerial/satellite imagery, as used in remote-sensing CLIP zero-shot papers.
 RS_TEMPLATES = [
-    "a satellite photo of {}.",
-    "an aerial photograph of {}.",
-    "a satellite image of {}.",
-    "a remote sensing image of {}.",
-    "an aerial view of {}.",
-    "a high resolution satellite photo of {}.",
-    "{} from above.",
-    "a photo of {}, a type of land cover.",
-    "a top-down view of {}.",
-    "this is a satellite photo of {}.",
+    "{}.",
 ]
 
 
