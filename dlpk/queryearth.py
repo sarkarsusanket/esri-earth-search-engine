@@ -73,9 +73,11 @@ class QueryEarth:
         begin = time.time()
         plan = query_parser.parse_query(query)
         print(f"Generated a plan in {(step1 := time.time() - begin)} sec, the plan is:", plan)
+        print("\n\nPLAN:\n", plan)
         result_gdf = self.executor.run_plan(plan)
         print(f"Executed the plan in {(step2 := time.time() - step1)} sec.")
-        result_gdf.to_file(rf"E:\Results\query-earth\test\{query.replace(" ", "_")}.shp")
+        os.makedirs(rf"E:\Results\query-earth\test\{query.replace(" ", "_")}", exist_ok=True)
+        result_gdf.to_file(rf"E:\Results\query-earth\test\{query.replace(" ", "_")}\output .shp")
         return result_gdf
 
 

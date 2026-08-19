@@ -44,10 +44,12 @@ the full name):
 
   demo(region?, query)          (D)   demographic similarity search, e.g.
                                        "poorer regions", "areas with high
-                                       unemployment". `region` is an optional
+                                       unemployment", "floods", "wildfire" etc.
+                                       `region` is an optional
                                        prior variable to search within — omit
                                        it (single argument) to search the
                                        whole study area. `query` is a string.
+                                       Natural calamities are also part of demography search like flood, wildfire
 
   poi(region?, query)           (P)   point-of-interest search over discrete
                                        amenity classes, e.g. "emergency
@@ -90,8 +92,22 @@ Syntax rules:
   result is the answer returned to the user.
 - Write ONLY the program. No markdown fences, no comments, no explanation,
   no trailing text — just the lines.
+- No comments on the DSL, only output the plan, NOTHING else.
 
 You have to be smart about what needs to be directed into vision and what get to go into POI.
+
+Example:
+Query: "Find all large industrial logistics hubs located outside dense floodplains within 10 km of low-income neighborhoods near Chicago, and list nearby cargo rail terminals"
+Output:
+a = geocode("Chicago")
+b = buffer(a, 10)
+c = demo(b, "low-income neighborhoods")
+d = buffer(c, 3)
+e = vision-low(d, "floodplains")
+f = vision-high(d, "industrial logistics hubs")
+g = difference(f, e)
+h = buffer(g, 1)
+output = poi(h, "cargo rail terminals")
 
 Example:
 Query: "Find circular farmlands in relatively poorer regions"
@@ -103,37 +119,6 @@ Example:
 Query: "Find farmlands which are near a water source"
 Output:
 output = vision-low("farmlands near water source")
-
-Example:
-Query: "Find parking lots"
-Output:
-output = vision-high("parking lots")
-
-Example:
-Query: "Find all the emergency services near highway interections within 5 kms of LA"
-Output:
-a = geocode("Los Angeles")
-b = buffer(a, 5)
-c = vision-low(b, "highway inetrsection")
-d = buffer(c, 2)
-output = poi(d, "emergency services")
-
-Example:
-Query: "Find residential homes with pools in the poorer regions of downtown LA"
-Output:
-a = geocode("Los Angeles")
-b = demo(a, "poorer regions")
-output = vision-high(b, "residential homes with pools")
-
-Example:
-Query: "Find solar farms outside dense forests near Phoenix"
-Output:
-a = geocode("Phoenix")
-b = buffer(a, 5)
-c = vision-low(b, "dense forests")
-d = buffer(c, 0.2)
-e = vision-high(b, "solar farms")
-output = difference(e, d)
 
 Remember: only geocode, demo, poi, vision-high, vision-low, buffer, intersection,
 union, difference, add are allowed. Write only the program lines. Solve the problem in steps using the tools available to you.
@@ -353,6 +338,37 @@ def _fallback_plan(user_query: str) -> QueryPlan:
 _LLM = None
 
 
+# def _get_llm():
+#     global _LLM
+#     if _LLM is not None:
+#         return _LLM
+
+#     if not config.ROUTER_GGUF_PATH:
+#         raise FileNotFoundError(
+#             "No .gguf router model found under weights/. Place your router GGUF file there."
+#         )
+
+#     from llama_cpp import Llama
+#     print(f"Loading router model: {config.ROUTER_GGUF_PATH} ...")
+#     _LLM = Llama(
+#         model_path=config.ROUTER_GGUF_PATH,
+#         n_ctx=config.ROUTER_N_CTX,
+#         n_threads=config.ROUTER_N_THREADS,
+#         verbose=False,
+#     )
+#     # Warm up: pay the first-inference cost now, at load time, not on the
+#     # first real user query.
+#     _LLM.create_chat_completion(
+#         messages=[
+#             {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+#             {"role": "user", "content": 'Query: "warmup"\nOutput:'},
+#         ],
+#         temperature=0,
+#         max_tokens=8,
+#     )
+#     return _LLM
+
+
 def _get_llm():
     global _LLM
     if _LLM is not None:
@@ -362,24 +378,13 @@ def _get_llm():
         raise FileNotFoundError(
             "No .gguf router model found under weights/. Place your router GGUF file there."
         )
+    from ollama import chat
+    import ollama
 
-    from llama_cpp import Llama
-    print(f"Loading router model: {config.ROUTER_GGUF_PATH} ...")
-    _LLM = Llama(
-        model_path=config.ROUTER_GGUF_PATH,
-        n_ctx=config.ROUTER_N_CTX,
-        n_threads=config.ROUTER_N_THREADS,
-        verbose=False,
-    )
-    # Warm up: pay the first-inference cost now, at load time, not on the
-    # first real user query.
-    _LLM.create_chat_completion(
-        messages=[
-            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-            {"role": "user", "content": 'Query: "warmup"\nOutput:'},
-        ],
-        temperature=0,
-        max_tokens=8,
+    response = chat(
+        model='ministral-3:3b',
+        messages=[{"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                  {"role": "user", "content": 'Query: "warmup"\nOutput:'}],
     )
     return _LLM
 
@@ -392,17 +397,27 @@ def warmup():
 
 def parse_query(user_query: str) -> QueryPlan:
     """Parse a natural-language geospatial query into an executable QueryPlan."""
-    llm = _get_llm()
+    # llm = _get_llm()
 
-    response = llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
-            {"role": "user", "content": f'Query: "{user_query}"\nOutput:'},
-        ],
-        temperature=0,
-        max_tokens=1024,
+    from ollama import chat
+    import ollama
+
+    response = chat(
+        model='ministral-3:3b',
+        messages=[{"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                    {"role": "user", "content": f'Query:{user_query}'}],
     )
-    raw_content = response["choices"][0]["message"]["content"].strip()
+
+    # response = llm.create_chat_completion(
+    #     messages=[
+    #         {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+    #         {"role": "user", "content": f'Query: "{user_query}"\nOutput:'},
+    #     ],
+    #     temperature=0,
+    #     max_tokens=1024,
+    # )
+    # raw_content = response["choices"][0]["message"]["content"].strip()
+    raw_content = response.message.content
     print("Raw content:", raw_content)
 
     dsl_text = _extract_dsl(raw_content)
