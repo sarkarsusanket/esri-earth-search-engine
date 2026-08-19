@@ -191,10 +191,69 @@ _FUNC_MAP = {
     "add": ("tool", None, "add"),
 }
 
+# Accept both `=` and `:` as the assignment separator so a model writing
+# `output: a = ...` or `output = ...` both parse.
 _LINE_RE = re.compile(
-    r'^\s*(?P<var>[A-Za-z_]\w*)\s*=\s*(?P<func>[A-Za-z_][A-Za-z_\-]*)\s*\((?P<args>.*)\)\s*$'
+    r'^\s*(?P<var>[A-Za-z_]\w*)\s*[=:]\s*(?P<func>[A-Za-z_][A-Za-z_\-]*)\s*\((?P<args>.*)\)\s*$'
 )
+# Matches the head of a statement anywhere in the raw output (mid-prose,
+# bullets, trailing junk, etc.). The full statement is extracted by
+# `_scan_balanced_paren` so strings containing ')' are handled correctly.
+_STMT_HEAD_RE = re.compile(r'([A-Za-z_]\w*)\s*[=:]\s*([A-Za-z_][A-Za-z_\-]*)\s*\(')
 _NUMBER_RE = re.compile(r'^-?\d+(\.\d+)?$')
+
+# Fuzz guard: how many arguments each function may legitimately take. Anything
+# more is a strong signal the model garbled the statement, so reject it rather
+# than silently feeding wrong inputs downstream. Keyed by (operation, action).
+_FUZZ_MAX_ARGS = {
+    ("geocode", None): 1,
+    ("demo", None): 2,
+    ("poi", None): 2,
+    ("vision", None): 2,
+    ("tool", "buffer"): 2,
+}
+
+
+def _scan_balanced_paren(text: str, open_paren: int):
+    """Scan forward from an opening paren, respecting quotes and nesting, and
+    return (args_str, close_index) at the matching close paren. Returns
+    (None, None) if the paren is never closed."""
+    depth = 0
+    quote = None
+    for j in range(open_paren, len(text)):
+        ch = text[j]
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+        elif ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                return text[open_paren + 1:j], j
+    return None, None
+
+
+def _find_statements(text: str):
+    """Single-capture pass: locate every `var = func(args)` statement anywhere
+    in the raw output, reconstructing each as a clean line so the parser never
+    depends on the model's line discipline."""
+    statements = []
+    i, n = 0, len(text)
+    while i < n:
+        m = _STMT_HEAD_RE.search(text, i)
+        if not m:
+            break
+        open_paren = m.end() - 1
+        args, close = _scan_balanced_paren(text, open_paren)
+        if args is None:
+            i = m.end()
+            continue
+        statements.append(f"{m.group(1).strip()} = {m.group(2).strip()}({args.strip()})")
+        i = close + 1
+    return statements
 
 
 def _split_args(arg_str: str):
@@ -220,14 +279,36 @@ def _split_args(arg_str: str):
     return [a.strip() for a in args if a.strip()]
 
 
+def _repair_token(token: str) -> str:
+    """Repair pass: drop trailing punctuation that may have glued onto an arg
+    (e.g. `"chicago",` -> `"chicago"`, `5.` -> `5`, `a,` -> `a`)."""
+    token = token.strip()
+    stripped = token.rstrip('.,;:!?') 
+    return stripped if stripped else token
+
+
 def _classify_arg(token: str):
-    """Return ('text'|'number'|'var', value) for a single DSL argument."""
-    if (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
+    """Return ('text'|'number'|'var', value) for a single DSL argument, or
+    None for junk that is neither a quoted string, a number, nor a bare
+    identifier."""
+    token = _repair_token(token)
+
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'"):
         return ('text', token[1:-1])
+
+    # Auto-close an unclosed leading quote (model dropped the closing mark),
+    # but only if it's the sole quote in the token.
+    if token[0] in ('"', "'") and token.count(token[0]) == 1:
+        return ('text', token[1:])
+
     if _NUMBER_RE.match(token):
         num = float(token)
         return ('number', int(num) if num.is_integer() else num)
-    return ('var', token)
+
+    if re.fullmatch(r'[A-Za-z_]\w*', token):
+        return ('var', token)
+
+    return None
 
 
 def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
@@ -241,7 +322,20 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         raise ValueError(f"Unsupported function '{func_name}' in line: {line!r}")
 
     operation, resolution, tool_action = _FUNC_MAP[func_name]
-    classified = [_classify_arg(tok) for tok in _split_args(match.group("args"))]
+    # Drop junk tokens (neither quoted string, number, nor identifier).
+    classified = [
+        c for c in (_classify_arg(tok) for tok in _split_args(match.group("args")))
+        if c is not None
+    ]
+
+    # Fuzz guard: reject statements with far more arguments than the function
+    # allows, a strong sign the model garbled the line.
+    fuzz_limit = _FUZZ_MAX_ARGS.get((operation, tool_action), 2)
+    if len(classified) > fuzz_limit:
+        raise ValueError(
+            f"{func_name}() got {len(classified)} arguments, expected at most "
+            f"{fuzz_limit}: {line!r}"
+        )
 
     var_args = [v for kind, v in classified if kind == 'var']
     text_args = [v for kind, v in classified if kind == 'text']
@@ -287,17 +381,14 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
 
 
 def _extract_dsl(raw_content: str) -> str:
-    """Strip a leading/trailing ```...``` fence if the model added one
-    despite being told not to, and drop blank/comment lines."""
+    """Line-level filter. Keep only lines that look like a DSL statement,
+    dropping prose, fences, comments, bullets, and blank lines regardless of
+    where the model put them."""
     raw_content = raw_content.strip()
     fence_match = re.search(r"```(?:\w+)?\s*(.*?)\s*```", raw_content, flags=re.DOTALL)
     if fence_match:
         raw_content = fence_match.group(1).strip()
-    lines = [
-        ln for ln in raw_content.splitlines()
-        if ln.strip() and not ln.strip().startswith("#")
-    ]
-    return "\n".join(lines)
+    return "\n".join(_find_statements(raw_content))
 
 
 def _coerce_plan(dsl_text: str) -> QueryPlan:
@@ -305,7 +396,18 @@ def _coerce_plan(dsl_text: str) -> QueryPlan:
     if not lines:
         raise ValueError("Parsed plan contains no steps.")
 
-    steps = [_parse_dsl_line(line, step_id=i + 1) for i, line in enumerate(lines)]
+    # Per-line error tolerance: skip malformed lines instead of failing the
+    # whole plan, so one bad statement doesn't discard the good ones.
+    steps = []
+    for i, line in enumerate(lines):
+        try:
+            steps.append(_parse_dsl_line(line, step_id=i + 1))
+        except Exception as e:
+            print(f"Skipping unparsable DSL line {i + 1} ({e}): {line!r}")
+
+    if not steps:
+        # Graceful drop-down: only fall back if NO line produced a valid step.
+        raise ValueError("No valid DSL lines survived filtering.")
 
     if steps[-1].output_variable.lower() != "output":
         # Be lenient: rename the last step's output rather than failing outright.
