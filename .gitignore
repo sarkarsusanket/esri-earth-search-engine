@@ -23,5 +23,5 @@ weights/
 *__pycache__/
 
 *.zip
-*.html
+clip_search*
 *.dlpk
