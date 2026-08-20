@@ -107,8 +107,8 @@
   <!-- ============ boot sequence — mirrors the QueryEarth Python init ============ -->
   <calcite-scrim id="bootScrim">
     <div class="boot-copy">
-      <calcite-loader scale="l" label="Starting QueryEarth"></calcite-loader>
-      <div class="boot-title">Starting the QueryEarth engine…</div>
+      <calcite-loader scale="l" label="Starting ESRI Earth Engine"></calcite-loader>
+      <div class="boot-title">Starting the ESRI Earth Engine…</div>
       <div class="boot-log" id="bootLog"></div>
     </div>
   </calcite-scrim>
@@ -117,8 +117,8 @@
 
     <calcite-navigation slot="header" style="border-block-end:1px solid #e4e4e4;">
       <calcite-navigation-logo slot="logo" icon="esri-logo" heading-tag="span">
-        <span slot="heading" class="qe-wordmark">Query<span>Earth</span></span>
-        <span slot="description">Natural-language geospatial search · built on ArcGIS</span>
+        <span slot="heading" class="qe-wordmark">ESRI Earth Engine</span>
+        <span slot="description">Natural-language geospatial search · built for ArcGIS</span>
       </calcite-navigation-logo>
     </calcite-navigation>
 
@@ -132,7 +132,7 @@
       <div class="qe-search-card">
         <div class="qe-search-row">
           <calcite-icon icon="sparkle" scale="m"></calcite-icon>
-          <calcite-text-area id="queryInput" placeholder="Ask QueryEarth… e.g. “solar farms near San Jose”" rows="2" resize="vertical"></calcite-text-area>
+          <calcite-text-area id="queryInput" placeholder="What do you want to find?" rows="2" resize="vertical"></calcite-text-area>
           <calcite-button id="runBtn" icon-start="search" disabled loading>Search</calcite-button>
         </div>
 
@@ -141,7 +141,7 @@
             <span id="resultsMeta">—</span>
             <calcite-chip scale="s" icon="cursor-click">click a result to zoom</calcite-chip>
           </div>
-          <calcite-list id="resultsList" selection-appearance="border" label="QueryEarth results"></calcite-list>
+          <calcite-list id="resultsList" selection-appearance="border" label="ESRI Earth Engine results"></calcite-list>
         </div>
       </div>
     </div>
@@ -315,7 +315,7 @@
   });
 
   // ---------------------------------------------------------------
-  // 3. Search — calls /api/predict, mirroring qe.predict(query)
+  // 3. Search — calls /api/predict
   // ---------------------------------------------------------------
   const DEMO_SITES = [
     { name: "Moffett Solar Array",        cat: "Solar farm",        lon: -122.058, lat: 37.402, tags: ["solar","farm","renewable","energy","panels"] },
@@ -399,7 +399,7 @@
       resultsMeta.textContent = `No matches for “${query}”`;
       const empty = document.createElement("div");
       empty.className = "qe-empty";
-      empty.textContent = "QueryEarth couldn't find a confident match. Try rephrasing, e.g. mention a place or feature type.";
+      empty.textContent = "Our Search Engine couldn't find a match. The feature doesn't exist in the area.";
       resultsList.appendChild(empty);
       return;
     }
@@ -479,8 +479,6 @@
       }
     } catch (err) {
       console.error("API Prediction Failed! Reason:", err);
-      // Comment out mockPredict to prevent silent default values while debugging:
-      // results = mockPredict(q);
       results = []; 
     }
 

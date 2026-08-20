@@ -94,7 +94,7 @@ Syntax rules:
   no trailing text — just the lines.
 - No comments on the DSL, only output the plan, NOTHING else.
 
-You have to be smart about what needs to be directed into vision and what get to go into POI.
+
 
 Example:
 Query: "Find all large industrial logistics hubs located outside dense floodplains within 10 km of low-income neighborhoods near Chicago, and list nearby cargo rail terminals"
@@ -122,6 +122,8 @@ output = vision-low("farmlands near water source")
 
 Remember: only geocode, demo, poi, vision-high, vision-low, buffer, intersection,
 union, difference, add are allowed. Write only the program lines. Solve the problem in steps using the tools available to you.
+
+You have to be smart about where the query needs to be for POI and where for vision, like 
 """
 
 
