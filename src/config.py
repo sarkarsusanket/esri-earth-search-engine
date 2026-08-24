@@ -1,60 +1,87 @@
 """
-Central configuration for the QueryEarth pipeline.
+Central configuration for the QueryEarth DLPK.
 
-All filesystem paths, model checkpoints, and constants live here so the
-rest of the codebase never hardcodes a path inline.
+Every path here is resolved relative to this file's location (the DLPK
+root) rather than hardcoded to a drive letter, so the package works
+wherever ArcGIS Pro unpacks it.
 """
 
+import glob
 import os
 import torch
 
 # ------------------------------------------------------------------
-# Device
+# Layout
 # ------------------------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+EMBEDDINGS_DIR = os.path.join(BASE_DIR, "embeddings")
+WEIGHTS_DIR = os.path.join(BASE_DIR, "weights")
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ------------------------------------------------------------------
-# Data paths
-# ------------------------------------------------------------------
-DEMO_PARQUET_PATH = (
-    rf"E:\Data\query-earth\embeddings_california\zip-demo-embs.parquet"
-)
-CLIP_CKPT_PATH = rf"E:\Results\mmdfm\weights\zip_nofusion_clip2.pth"
 
-# Folder containing the three resolution variants of the vision embeddings.
-# Expected files inside this folder:
-#   embeddings_full.npz   -> ~2km tiles   (low resolution / wide context)
-#   embeddings_tile4.npz  -> ~500m tiles  (medium resolution)
-#   embeddings_tile100.npz-> ~200m tiles  (high resolution / fine detail)
-VISION_EMBEDDINGS_DIR = rf"E:\Data\query-earth\embeddings_california"
+def _find_first(directory: str, patterns) -> str:
+    """Return the first file matching any of `patterns` (globs) under
+    `directory`, or None. Lets the DLPK pick up whatever filename the
+    checkpoint/weights happen to have instead of hardcoding one."""
+    if not os.path.isdir(directory):
+        return None
+    for pattern in patterns:
+        hits = sorted(glob.glob(os.path.join(directory, pattern)))
+        if hits:
+            return hits[0]
+    return None
 
-OUTPUT_DIR = rf"E:\Results\query-earth"    
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------
-# Resolution mapping
+# Demography assets
 # ------------------------------------------------------------------
-# Maps the LLM-facing resolution vocabulary ("low"/"medium"/"high") to the
-# actual NPZ file on disk. Keeping this as a single dict makes it trivial
-# to add a fourth resolution tier later without touching pipeline logic.
-RESOLUTION_TO_FILE = {
-    "low": "hex7-skyclip-low.npz",      # 2km   x 2km  tiles
-    # "medium": "embeddings_tile4.npz",   # 500m  x 500m tiles
-    "high": "hex7-skyclip-high.npz",  # 200m  x 200m tiles
+DEMO_PARQUET_PATH = os.path.join(EMBEDDINGS_DIR, "demography-emb.parquet")
+
+# Trained TabularTextCLIP checkpoint. Expected in weights/, e.g.
+# weights/demo_clip.pth — auto-detected so you don't have to hardcode a name.
+DEMO_CLIP_CKPT_PATH = _find_first(WEIGHTS_DIR, ("*demo*.pth", "*demo*.pt", "*.pth", "*.pt"))
+
+# Local, offline text embedder for demo-text queries. Smallest well-supported general
+# text embedder available (~23M params, 384-dim, CPU-friendly, no network).
+_LOCAL_EMBEDDER_DIR = os.path.join(WEIGHTS_DIR, "text-embedder")
+TEXT_EMBED_MODEL = _LOCAL_EMBEDDER_DIR if os.path.isdir(_LOCAL_EMBEDDER_DIR) else "sentence-transformers/all-MiniLM-L6-v2"
+TEXT_EMBED_DIM = 384  # all-MiniLM-L6-v2 output dim. Update this if you swap the embedder later.
+
+# ------------------------------------------------------------------
+# Vision assets
+# ------------------------------------------------------------------
+VISION_INDEX_DIRS = {
+    "low": os.path.join(EMBEDDINGS_DIR, "lowres-vision"),
+    "high": os.path.join(EMBEDDINGS_DIR, "highres-vision"),
 }
 DEFAULT_RESOLUTION = "high"
 
-# ------------------------------------------------------------------
-# Model identifiers
-# ------------------------------------------------------------------
+# Text encoder used to embed vision *queries* into the same space the offline
+# image embeddings were computed in. This must match whatever model produced
+# the embeddings baked into embeddings/{lowres,highres}-vision — unrelated to
+# TurboQuant itself, which only compresses the already-computed image side.
 CLIP_VISION_MODEL_NAME = "ViT-L-14"
 CLIP_VISION_PRETRAINED = "laion2b_s32b_b82k"
 
-OLLAMA_EMBED_MODEL = "qwen3-embedding:4b"
-OLLAMA_ROUTER_MODEL = "ministral-3:3b"
+# ------------------------------------------------------------------
+# POI assets
+# ------------------------------------------------------------------
+POI_EMBEDDING_PATH = os.path.join(EMBEDDINGS_DIR, "poi_embeddings.parquet")
+POI_PATH = os.path.join(EMBEDDINGS_DIR, "poi.parquet")
+
+# ------------------------------------------------------------------
+# Local query router (llama.cpp GGUF model, replaces the previous Ollama
+# router dependency)
+# ------------------------------------------------------------------
+ROUTER_GGUF_PATH = os.path.join(WEIGHTS_DIR, rf"gemma-4-E4B-it-Q4_K_M.gguf")
+ROUTER_N_CTX = 1500
+ROUTER_N_THREADS = max(1, (os.cpu_count() or 4) - 1)
 
 # ------------------------------------------------------------------
 # Search defaults
 # ------------------------------------------------------------------
 DEMO_TOP_K_DEFAULT = 30
 VISION_TOP_N_DEFAULT = 100
+VISION_NPROBE_DEFAULT = 24  # IVF clusters probed per global (non-spatially-filtered) vision search
+POI_THRESHOLD = 0.48 # Threshhold for poi search

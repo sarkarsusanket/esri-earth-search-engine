@@ -12,23 +12,29 @@ from typing import Dict
 
 import geopandas as gpd
 
-import schema
 from query_parser import QueryPlan, PipelineStep
 from operations import geocode as geocode_op
 from operations import demo as demo_op
 from operations import vision as vision_op
+from operations import poi as poi_op
 from operations.tool import TOOL_DISPATCH
 
 
 class PipelineContext:
-    """Holds the long-lived assets (models, embeddings) needed across steps,
-    so they're loaded once per session rather than once per step."""
+    """Holds the long-lived assets (models, embeddings, vision indices)
+    needed across steps, so they're loaded once per DLPK session rather
+    than once per step or once per query."""
 
-    def __init__(self, demo_gdf, ae_embeddings, demo_model, vision_encoder):
+    def __init__(self, demo_gdf, ae_embeddings, demo_model, text_embedder, vision_encoder, vision_indices,
+                 poi_gdf=None, poi_embedding_df=None):
         self.demo_gdf = demo_gdf
         self.ae_embeddings = ae_embeddings
         self.demo_model = demo_model
+        self.text_embedder = text_embedder
         self.vision_encoder = vision_encoder
+        self.vision_indices = vision_indices  # dict: resolution -> TurboQuantSearchIndex
+        self.poi_gdf = poi_gdf
+        self.poi_embedding_df = poi_embedding_df
 
 
 class PipelineExecutor:
@@ -63,15 +69,28 @@ class PipelineExecutor:
                 demo_gdf=self.context.demo_gdf,
                 ae_embeddings=self.context.ae_embeddings,
                 clip_model=self.context.demo_model,
+                text_embedder=self.context.text_embedder
             )
 
         elif step.operation == "vision":
             region = self._single_input(step)
+            resolution = params.get("resolution")
             result = vision_op.search_vision(
                 target=params.get("target"),
                 region=region,
                 vision_encoder=self.context.vision_encoder,
-                resolution=params.get("resolution"),
+                turbo_index=self.context.vision_indices.get(resolution),
+                resolution=resolution,
+            )
+
+        elif step.operation == "poi":
+            region = self._single_input(step)
+            result = poi_op.search_poi(
+                target=params.get("target"),
+                region=region,
+                poi_gdf=self.context.poi_gdf,
+                poi_embedding_df=self.context.poi_embedding_df,
+                text_embedder=self.context.text_embedder,
             )
 
         elif step.operation == "tool":
@@ -111,7 +130,7 @@ class PipelineExecutor:
     def run_plan(self, plan: QueryPlan, verbose: bool = True) -> gpd.GeoDataFrame:
         for step in plan.steps:
             if verbose:
-                print(f"[step {step.step_id}] {step.operation}: {step.description}")
+                print(f"[step {step.step_id}] {step.operation}")
             result = self.run_step(step)
             if verbose:
                 print(f"  -> '{step.output_variable}': {len(result)} feature(s)")

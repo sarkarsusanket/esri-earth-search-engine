@@ -5,16 +5,10 @@ These are pure functions over GeoDataFrames that already conform to the
 pipeline's standard schema (a `geometry` column, optionally a `score`
 column). They never touch embeddings or models — only geometry.
 """
-from typing import Optional
-
+import pandas as pd
 import geopandas as gpd
 
-
-from schema import *
-
-# Rough degrees-per-km at mid-latitudes; used only as a buffer fallback
-# when a GeoDataFrame has no projected CRS to buffer in meters directly.
-_KM_TO_DEGREES = 1 / 111.0
+from schema import GEOMETRY_COL, CRS, empty_gdf, from_geometries, ensure_crs
 
 
 def buffer(gdf: gpd.GeoDataFrame, distance_km: float) -> gpd.GeoDataFrame:
@@ -69,8 +63,6 @@ def difference(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def add(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Concatenate two GeoDataFrames' rows (set addition, not spatial union)."""
-    import pandas as pd
-
     a, b = ensure_crs(a), ensure_crs(b)
     if a.empty:
         return b.copy()

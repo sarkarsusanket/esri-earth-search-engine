@@ -136,6 +136,7 @@ class TurboQuantSearchIndex:
         rotated_query = self._rotate(query_vec)
 
         if region is not None and not region.empty:
+            region.to_file(rf"results/region.shp")
             candidate_rows = self._spatial_candidates(region)
             if len(candidate_rows) == 0:
                 return np.empty(0), np.empty(0), np.empty(0)

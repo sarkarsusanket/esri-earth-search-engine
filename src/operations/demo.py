@@ -6,9 +6,9 @@ import torch
 import torch.nn.functional as F
 import geopandas as gpd
 
-from config import *
-from models import *
-from schema import *
+import config
+from models import LocalTextEmbedder
+from schema import SCORE_COL, ensure_crs
 
 
 def search_demographics(target: Optional[str],
@@ -16,7 +16,8 @@ def search_demographics(target: Optional[str],
                          demo_gdf: gpd.GeoDataFrame,
                          ae_embeddings: torch.Tensor,
                          clip_model: torch.nn.Module,
-                         top_k: int = DEMO_TOP_K_DEFAULT) -> gpd.GeoDataFrame:
+                         text_embedder: torch.nn.Module,
+                         top_k: int = config.DEMO_TOP_K_DEFAULT) -> gpd.GeoDataFrame:
     """Rank demographic polygons by similarity to a free-text query, optionally
     restricted to a prior region.
 
@@ -41,8 +42,8 @@ def search_demographics(target: Optional[str],
             result[SCORE_COL] = 1.0
         return ensure_crs(result)
 
-    text_embedding = get_text_embedding(target)
-    text_tensor = torch.from_numpy(np.array([text_embedding], dtype=np.float32)).to(DEVICE)
+    text_embedding = text_embedder.encode(target)
+    text_tensor = torch.from_numpy(np.array([text_embedding], dtype=np.float32)).to(config.DEVICE)
 
     with torch.no_grad():
         tabular_latents = F.normalize(clip_model.geo_projector(candidate_embeddings), p=2, dim=-1).float()

@@ -1,23 +1,17 @@
 """
 Build a persisted TurboQuant index (rotate -> IVF coarse cluster -> bit-packed
 scalar quantizer + 1-bit residual correction) PLUS a spatial (haversine BallTree)
-index, from an npz of location embeddings + lat/lon centers.
-
-Input npz must contain:
-  - "embeddings": (N, D) float32
-  - "lat": (N,) float32/float64
-  - "lon": (N,) float32/float64
-
-Output: a folder containing everything needed at inference time — no
-recomputation of rotation/quantizer/clusters/spatial-tree required, just load
-and query. See the "WHAT GETS WRITTEN" block below for exact contents.
+index, from a Parquet file containing location embeddings + lat/lon coordinates.
 
 Usage:
     python build_turboquant_index.py \
-        --npz_path embeddings.npz \
+        --parquet_path embeddings.parquet \
         --output_dir ./tq_index \
         --num_bits 1 \
-        --nlist 8000
+        --nlist 8000 \
+        --lat_col lat \
+        --lon_col lon \
+        --emb_col embedding
 """
 
 import argparse
@@ -27,6 +21,7 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+import pyarrow.dataset as ds
 import torch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -34,8 +29,7 @@ logger = logging.getLogger("build_turboquant_index")
 
 
 # ==============================================================================
-# BIT PACKING — row-aligned, so any subset of rows (contiguous OR fancy-indexed)
-# can be decompressed independently at inference time
+# BIT PACKING — row-aligned
 # ==============================================================================
 def pack_bits_rows(values: torch.Tensor, num_bits: int) -> np.ndarray:
     arr = values.detach().cpu().numpy().astype(np.uint32)
@@ -56,7 +50,6 @@ def _kmeans(x: torch.Tensor, k: int, iters: int = 15, sample_size: int = 200_000
     train_x = x[torch.randperm(n, generator=gen)[:min(sample_size, n)]] if n > sample_size else x
     centroids = train_x[torch.randperm(train_x.shape[0], generator=gen)[:k]].clone()
     for _ in range(iters):
-        # chunked distance to avoid a huge (train_x, k) matrix at once for large k
         assign = torch.empty(train_x.shape[0], dtype=torch.int64)
         chunk = 20_000
         for s in range(0, train_x.shape[0], chunk):
@@ -73,30 +66,34 @@ def _kmeans(x: torch.Tensor, k: int, iters: int = 15, sample_size: int = 200_000
     return centroids
 
 
-def _load_npz_flexible(npz_path: str):
-    """Accepts either {'embeddings','lat','lon'} or {'emb','locations'} (locations = (N,2) [lat,lon])."""
-    data = np.load(npz_path)
-    keys = set(data.files)
-    print(keys)
-    if {"embeddings", "lat", "lon"} <= keys:
-        emb = np.asarray(data["embs"], dtype=np.float32)
-        lat = np.asarray(data["lat"], dtype=np.float32)
-        lon = np.asarray(data["lon"], dtype=np.float32)
-    elif {"emb", "locations"} <= keys:
-        emb = np.asarray(data["emb"], dtype=np.float32)
-        locs = np.asarray(data["locations"], dtype=np.float32)
-        assert locs.shape[1] == 2, f"expected 'locations' shape (N,2), got {locs.shape}"
-        lat, lon = locs[:, 0], locs[:, 1]
-    else:
-        raise KeyError(
-            f"npz must contain either ('embeddings','lat','lon') or ('emb','locations'); found {sorted(keys)}"
-        )
-    return emb, lat, lon
+def _read_parquet_columns(parquet_path: str, columns: list):
+    """
+    Zero-copy efficient arrow dataset loader for specific columns.
+    Converts embedding column (List / FixedSizeList) to a contiguous 2D float32 array.
+    """
+    dataset = ds.dataset(parquet_path, format="parquet")
+    table = dataset.to_table(columns=columns)
+    
+    col_data = {}
+    for col in columns:
+        arr = table[col]
+        # Check if the column is a list/nested array (embeddings)
+        if hasattr(arr.type, "value_type"):
+            # Flatten PyArrow list column into contiguous (N, D) numpy array
+            flat = arr.to_numpy(zero_copy_only=False)
+            col_data[col] = np.vstack(flat).astype(np.float32)
+        else:
+            col_data[col] = arr.to_numpy().astype(np.float32)
+            
+    return col_data
 
 
 def build_index(
-    npz_path: str,
+    parquet_path: str,
     output_dir: str,
+    lat_col: str = "lat",
+    lon_col: str = "lon",
+    emb_col: str = "emb",
     num_bits: int = 1,
     nlist: int = None,
     clip_percentile: float = 99.9,
@@ -107,10 +104,16 @@ def build_index(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Loading %s ...", npz_path)
-    embeddings, lat, lon = _load_npz_flexible(npz_path)
+    logger.info("Loading Parquet data from %s ...", parquet_path)
+    data = _read_parquet_columns(parquet_path, [emb_col, lat_col, lon_col])
+    
+    embeddings = data[emb_col]
+    lat = data[lat_col]
+    lon = data[lon_col]
+    del data  # Free wrapper dictionary
+
     num_vectors, dim = embeddings.shape
-    assert lat.shape[0] == num_vectors and lon.shape[0] == num_vectors, "lat/lon must match embedding count"
+    assert lat.shape[0] == num_vectors and lon.shape[0] == num_vectors, "lat/lon count must match embeddings"
     logger.info("Loaded %d embeddings, dim=%d", num_vectors, dim)
 
     if nlist is None:
@@ -118,18 +121,16 @@ def build_index(
     nlist = max(1, min(nlist, num_vectors))
     logger.info("Using nlist=%d, chunk_size=%d", nlist, chunk_size)
 
-    # --- 1. Rotation matrix (small, dim x dim — no dependency on N) ---
+    # --- 1. Rotation matrix ---
     gen = torch.Generator().manual_seed(seed)
     rotation_matrix, _ = torch.linalg.qr(torch.randn(dim, dim, generator=gen))
 
-    # --- 2. Train IVF centroids + estimate quantizer thresholds on a SMALL sample ---
-    # This is the only place we touch a random subset of rows; everything else below
-    # is a single sequential pass, chunked, so we never hold more than one
-    # chunk-sized (chunk_size, dim) float tensor in memory at a time.
+    # --- 2. Train IVF centroids + estimate quantizer thresholds on a SAMPLE ---
     logger.info("Sampling %d rows for k-means + threshold estimation...", min(sample_size, num_vectors))
     rng = np.random.default_rng(seed)
     sample_idx = rng.choice(num_vectors, size=min(sample_size, num_vectors), replace=False)
-    sample_idx.sort()  # sequential-ish access is faster than fully random for large arrays
+    sample_idx.sort()
+    
     sample = torch.from_numpy(np.ascontiguousarray(embeddings[sample_idx]))
     rotated_sample = sample @ rotation_matrix
     del sample
@@ -142,8 +143,6 @@ def build_index(
     levels = 2 ** num_bits - 1
     scale = (2 * clip_val) / levels
 
-    # Residual-scale ceiling, estimated from the sample the same way (robust percentile,
-    # not max, so a handful of outlier rows don't blow the int8 quantization range).
     clamped_sample = torch.clamp(rotated_sample, -clip_val, clip_val)
     codes_sample = torch.round((clamped_sample + clip_val) / scale)
     dequant_sample = codes_sample * scale - clip_val
@@ -152,11 +151,10 @@ def build_index(
     rs_max = max(rs_max, 1e-8)
     del rotated_sample, clamped_sample, codes_sample, dequant_sample, residual_sample
 
-    # --- 3. Single sequential streaming pass: rotate -> assign -> quantize -> pack,
-    #         one chunk at a time. Peak extra memory here is O(chunk_size * dim),
-    #         not O(N * dim). ---
+    # --- 3. Single sequential streaming pass ---
     assign_parts, codes_parts, signs_parts, rsq_parts = [], [], [], []
     n_chunks = (num_vectors + chunk_size - 1) // chunk_size
+    
     for ci, start in enumerate(range(0, num_vectors, chunk_size)):
         end = min(start + chunk_size, num_vectors)
         chunk = torch.from_numpy(np.ascontiguousarray(embeddings[start:end]))
@@ -189,9 +187,7 @@ def build_index(
     residual_scale_q = np.concatenate(rsq_parts, axis=0)
     del assign_parts, codes_parts, signs_parts, rsq_parts, embeddings
 
-    # --- 4. Sort by IVF cluster for contiguous storage. Only reordering the already-
-    #         compressed arrays here (packed_codes/signs are already tiny) plus lat/lon —
-    #         never the original float embeddings. ---
+    # --- 4. Sort by IVF cluster for contiguous storage ---
     sort_order = torch.argsort(assign).numpy()
     row_of_id = np.empty_like(sort_order)
     row_of_id[sort_order] = np.arange(num_vectors)
@@ -205,13 +201,13 @@ def build_index(
     lat_sorted = lat[sort_order]
     lon_sorted = lon[sort_order]
 
-    # --- 5. Spatial index (haversine BallTree) over the same storage-row order ---
+    # --- 5. Spatial index (haversine BallTree) ---
     logger.info("Building spatial BallTree (haversine)...")
     from sklearn.neighbors import BallTree
     coords_rad = np.radians(np.stack([lat_sorted, lon_sorted], axis=1)).astype(np.float64)
     spatial_tree = BallTree(coords_rad, metric="haversine")
 
-    # --- 6. Write everything needed at inference time ---
+    # --- 6. Write artifacts ---
     logger.info("Writing index to %s ...", out)
     np.save(out / "rotation_matrix.npy", rotation_matrix.numpy())
     np.save(out / "centroids.npy", centroids.numpy())
@@ -223,6 +219,7 @@ def build_index(
     np.save(out / "row_of_id.npy", row_of_id.astype(np.int32))
     np.save(out / "lat.npy", lat_sorted)
     np.save(out / "lon.npy", lon_sorted)
+    
     with open(out / "spatial_tree.pkl", "wb") as f:
         pickle.dump(spatial_tree, f)
 
@@ -248,14 +245,16 @@ def build_index(
         "Done. %d vectors, dim=%d -> %.2fx compression (%.1f bytes/vector, excl. spatial index/meta)",
         num_vectors, dim, original_bytes / compressed_bytes, compressed_bytes / num_vectors,
     )
-    logger.info("Folder contents: %s", sorted(p.name for p in out.iterdir()))
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Build a TurboQuant + IVF + spatial index folder from an npz")
-    p.add_argument("--npz_path", type=str, required=True, help="npz with 'embeddings' (N,D), 'lat' (N,), 'lon' (N,)")
+    p = argparse.ArgumentParser(description="Build a TurboQuant + IVF + spatial index folder from a Parquet file")
+    p.add_argument("--parquet_path", type=str, required=True, help="Path to input .parquet file")
     p.add_argument("--output_dir", type=str, required=True)
-    p.add_argument("--num_bits", type=int, default=1, help="Stage-1 bits/coordinate (1 -> ~2 bits/dim total w/ residual)")
+    p.add_argument("--lat_col", type=str, default="lat", help="Latitude column name")
+    p.add_argument("--lon_col", type=str, default="lon", help="Longitude column name")
+    p.add_argument("--emb_col", type=str, default="emb", help="Embedding column name")
+    p.add_argument("--num_bits", type=int, default=2, help="Stage-1 bits/coordinate")
     p.add_argument("--nlist", type=int, default=None, help="IVF clusters; default sqrt(N)")
     p.add_argument("--clip_percentile", type=float, default=99.9)
     p.add_argument("--chunk_size", type=int, default=200_000, help="Rows processed per streaming chunk")
@@ -267,8 +266,11 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     build_index(
-        npz_path=args.npz_path,
+        parquet_path=args.parquet_path,
         output_dir=args.output_dir,
+        lat_col=args.lat_col,
+        lon_col=args.lon_col,
+        emb_col=args.emb_col,
         num_bits=args.num_bits,
         nlist=args.nlist,
         clip_percentile=args.clip_percentile,

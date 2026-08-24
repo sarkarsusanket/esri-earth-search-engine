@@ -7,7 +7,7 @@ query router), then serves `predict(query)` calls cheaply against them.
 
     from queryearth import QueryEarth
     qe = QueryEarth()                 # heavy, one-time load
-    fs = qe.predict("find golf courses near wealthy suburbs in Texas")
+    fs = qe.find("find golf courses near wealthy suburbs in Texas")
 """
 import logging
 
@@ -63,22 +63,23 @@ class QueryEarth:
         )
         self.executor = PipelineExecutor(self.context)
 
-        query_parser.warmup()
-
-    def predict(self, query: str, **kwargs):
+    def find(self, query: str, save_gdf = False, **kwargs):
         """Given a natural-language query string, parse it into a pipeline
         plan, execute it, and return the result as an arcgis FeatureSet."""
         if not isinstance(query, str) or not query.strip():
             raise ValueError("QueryEarth.predict expects a non-empty query string.")
+        
         begin = time.time()
+
         plan = query_parser.parse_query(query)
-        step1 = time.time()
-        print(f"Generated a plan in {(step1 - begin)} sec, the plan is:", plan)
-        print("\n\nPLAN:\n", plan)
         result_gdf = self.executor.run_plan(plan)
-        print(f"Executed the plan in {(time.time() - step1)} sec.")
-        os.makedirs(rf"E:\Results\query-earth\test\{query.replace(" ", "_")}", exist_ok=True)
-        result_gdf.to_file(rf"E:\Results\query-earth\test\{query.replace(" ", "_")}\output .shp")
+
+        print(f"Found the objects in {(time.time() - begin)} seconds.")
+
+        if save_gdf:
+            os.makedirs(rf"results\{query.replace(" ", "_")}", exist_ok=True)
+            result_gdf.to_file(rf"results\{query.replace(" ", "_")}\output .shp")
+
         return result_gdf
 
 
@@ -89,13 +90,6 @@ if __name__ == "__main__":
     parser.add_argument("-query", type=str, required=True, help="The query to search for")
     args = parser.parse_args()
 
-    begin = time.time()
     qe = QueryEarth()
     qe.initialize()
-    print(f"\nInitialized in {time.time() - begin:.2f} seconds.")
-    begin = time.time()
-    result = qe.predict(args.query)
-    print(f"\nProcessed the query in {time.time() - begin:.2f} seconds.")
-    begin = time.time()
-    result = qe.predict(r"Farmlands near a river")
-    print(f"\nProcessed the second query in {time.time() - begin:.2f} seconds.")
+    result = qe.find(args.query)
