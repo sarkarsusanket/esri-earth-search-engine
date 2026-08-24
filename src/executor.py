@@ -26,7 +26,7 @@ class PipelineContext:
     than once per step or once per query."""
 
     def __init__(self, demo_gdf, ae_embeddings, demo_model, text_embedder, vision_encoder, vision_indices,
-                 poi_gdf=None, poi_embedding_df=None):
+                 poi_gdf=None, poi_embedding_df=None, grounder=None):
         self.demo_gdf = demo_gdf
         self.ae_embeddings = ae_embeddings
         self.demo_model = demo_model
@@ -35,6 +35,7 @@ class PipelineContext:
         self.vision_indices = vision_indices  # dict: resolution -> TurboQuantSearchIndex
         self.poi_gdf = poi_gdf
         self.poi_embedding_df = poi_embedding_df
+        self.grounder = grounder
 
 
 class PipelineExecutor:
@@ -79,6 +80,7 @@ class PipelineExecutor:
                 target=params.get("target"),
                 region=region,
                 vision_encoder=self.context.vision_encoder,
+                vision_grounder=self.context.grounder,
                 turbo_index=self.context.vision_indices.get(resolution),
                 resolution=resolution,
             )

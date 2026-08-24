@@ -152,6 +152,8 @@ class VisionEncoder:
         model, _, _ = open_clip.create_model_and_transforms(
             model_name, pretrained=pretrained
         )
+        checkpoint = torch.load(rf"E:\Weights\vlm\RS5M_ViT-H-14.pt", map_location="cpu")
+        model.load_state_dict(checkpoint, strict=False)
         self.model = model.to(config.DEVICE).eval()
         self.tokenizer = open_clip.get_tokenizer(model_name)
 

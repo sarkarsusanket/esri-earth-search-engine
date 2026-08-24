@@ -30,6 +30,7 @@ import query_parser
 from executor import PipelineContext, PipelineExecutor
 from turboquant_index import TurboQuantSearchIndex
 from schema import GEOMETRY_COL, SCORE_COL
+from operations.grounding import SpatialGrounder
 
 
 # ------------------------------------------------------------------
@@ -50,6 +51,8 @@ class QueryEarth:
 
         poi_gdf, poi_embedding_df = models.load_poi_assets()
 
+        grounder = SpatialGrounder()
+
         vision_indices = {}
         for resolution, folder in config.VISION_INDEX_DIRS.items():
             if os.path.isdir(folder) and os.path.exists(os.path.join(folder, "meta.json")):
@@ -59,9 +62,10 @@ class QueryEarth:
 
         self.context = PipelineContext(
             demo_gdf, ae_embeddings, demo_model, text_embedder,
-            vision_encoder, vision_indices, poi_gdf, poi_embedding_df,
+            vision_encoder, vision_indices, poi_gdf, poi_embedding_df, grounder
         )
         self.executor = PipelineExecutor(self.context)
+
 
     def find(self, query: str, save_gdf = False, **kwargs):
         """Given a natural-language query string, parse it into a pipeline

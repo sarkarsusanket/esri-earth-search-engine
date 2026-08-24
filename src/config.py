@@ -52,8 +52,8 @@ TEXT_EMBED_DIM = 384  # all-MiniLM-L6-v2 output dim. Update this if you swap the
 # Vision assets
 # ------------------------------------------------------------------
 VISION_INDEX_DIRS = {
-    "low": os.path.join(EMBEDDINGS_DIR, "lowres-vision"),
-    "high": os.path.join(EMBEDDINGS_DIR, "highres-vision"),
+    "low": rf"E:\Data\query-earth\embeddings\turboquant\vision-low-2026",
+    "high": rf"E:\Data\query-earth\embeddings\turboquant\vision-high-2026",
 }
 DEFAULT_RESOLUTION = "high"
 
@@ -61,8 +61,8 @@ DEFAULT_RESOLUTION = "high"
 # image embeddings were computed in. This must match whatever model produced
 # the embeddings baked into embeddings/{lowres,highres}-vision — unrelated to
 # TurboQuant itself, which only compresses the already-computed image side.
-CLIP_VISION_MODEL_NAME = "ViT-L-14"
-CLIP_VISION_PRETRAINED = "laion2b_s32b_b82k"
+CLIP_VISION_MODEL_NAME = "ViT-H-14"
+CLIP_VISION_PRETRAINED = "laion2b_s32b_b79k"
 
 # ------------------------------------------------------------------
 # POI assets

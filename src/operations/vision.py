@@ -11,14 +11,18 @@ region-filtered candidate rows for spatially-restricted search).
 from typing import Optional
 
 import geopandas as gpd
+import asyncio
+from shapely.geometry import Point
 
 import config
 from schema import empty_gdf, from_geometries
 
+GROUND=False
 
 def search_vision(target: str,
                    region: Optional[gpd.GeoDataFrame],
                    vision_encoder: "models.VisionEncoder",
+                   vision_grounder: "models.SpatialGrounder",
                    turbo_index: Optional["turboquant_index.TurboQuantSearchIndex"],
                    resolution: str = config.DEFAULT_RESOLUTION,
                    top_n: int = config.VISION_TOP_N_DEFAULT,
@@ -39,9 +43,54 @@ def search_vision(target: str,
 
     scores, lat, lon = turbo_index.search(query_np, top_k=top_n, region=region, nprobe=nprobe)
 
-    if len(scores) == 0:
-        print(f"No tiles at resolution '{resolution}' matched (or none fall inside the given region).")
-        return empty_gdf()
+    if GROUND:
+        grounded_targets = vision_grounder.ground_locations(
+            locations=list(zip(lat, lon)),
+            query=target,
+            # radius_meters=200,
+        )
 
-    geometries = gpd.points_from_xy(lon, lat)
-    return from_geometries(geometries, scores=scores)
+        if len(scores) == 0:
+            print(f"No tiles at resolution '{resolution}' matched (or none fall inside the given region).")
+            return empty_gdf()
+
+        # Unpack detections into flat lists
+        points = []
+        detection_scores = []
+        tile_scores = []
+        queries = []
+
+        for tile_score, tile_detections in zip(scores, grounded_targets):
+            for det in tile_detections:
+                # Create Shapely Point from grounded coordinates
+                points.append(Point(det["lon"], det["lat"]))
+                detection_scores.append(det["confidence"])
+                tile_scores.append(tile_score)
+                queries.append(det["query"])
+
+        # Fallback if vector search found tiles, but GroundingDINO detected 0 matching objects
+        if not points:
+            print(f"No grounded objects matching '{target}' were found inside candidate tiles.")
+            return empty_gdf()
+
+        # Build GeoDataFrame from extracted detections
+        gdf = gpd.GeoDataFrame(
+            {
+                "target": queries,
+                "detection_score": detection_scores,
+                "tile_score": tile_scores,
+            },
+            geometry=points,
+            crs="EPSG:4326"
+        )
+
+    else:
+        if len(scores) == 0:
+            print(f"No tiles at resolution '{resolution}' matched (or none fall inside the given region).")
+            return empty_gdf()
+
+        geometries = gpd.points_from_xy(lon, lat)
+        gdf = from_geometries(geometries, scores=scores)
+
+    return gdf
+
