@@ -16,6 +16,7 @@ from shapely.geometry import Point
 
 import config
 from schema import empty_gdf, from_geometries
+from operations.threshold import compute_threshold
 
 GROUND=False
 
@@ -25,7 +26,6 @@ def search_vision(target: str,
                    vision_grounder: "models.SpatialGrounder",
                    turbo_index: Optional["turboquant_index.TurboQuantSearchIndex"],
                    resolution: str = config.DEFAULT_RESOLUTION,
-                   top_n: int = config.VISION_TOP_N_DEFAULT,
                    nprobe: int = config.VISION_NPROBE_DEFAULT) -> gpd.GeoDataFrame:
     """Find the top-N tile locations whose visual embedding best matches a
     text query, optionally restricted to `region`."""
@@ -41,7 +41,13 @@ def search_vision(target: str,
     else:
         print(f"[{resolution}] Global IVF-routed TurboQuant search (nprobe={nprobe})...")
 
-    scores, lat, lon = turbo_index.search(query_np, top_k=top_n, region=region, nprobe=nprobe)
+    scores, lat, lon = turbo_index.search(query_np, region=region, nprobe=nprobe)
+
+    # Adaptive Thresholding
+    mask = compute_threshold(scores)
+    scores = scores[mask == 1]
+    lat = lat[mask == 1]
+    lon = lon[mask == 1]
 
     if GROUND:
         grounded_targets = vision_grounder.ground_locations(

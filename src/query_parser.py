@@ -30,9 +30,11 @@ load_dotenv()
 
 import config
 
-SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "poi"}
+SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "poi", "change"}
 SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
+SUPPORTED_TIME_PERIODS = set(config.VISION_YEARS.keys())
+SUPPORTED_CHANGE_MODES = {"new", "removed", "increased", "decreased"}
 
 ROUTER_SYSTEM_PROMPT = """
 You are the QueryEarth geospatial query planner.
@@ -78,7 +80,7 @@ Examples:
 - high housing costs
 - areas with high poverty
 - areas with high educational attainment
-- areas affected by wildfire
+- areas affected by wildfire or natural calamities
 - flood-prone areas
 
 The query should describe a property of a geographic area, population, or regional statistic.
@@ -161,6 +163,84 @@ Think:
 
 Use vision-high when the requested object is too small or visually detailed for vision-low.
 
+--------------------------------------------------
+
+6. change-low(region?, query, from_time, to_time, mode)
+
+Detect changes in LARGE physical features and land-use patterns between two
+time periods, using lower-resolution imagery.
+
+Arguments:
+- from_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- to_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- mode: one of "new", "removed", "increased", "decreased"
+
+Use change-low when detecting change in LARGE features such as:
+- forests cleared or new farmland
+- new large buildings or warehouses
+- large parking lots appeared or removed
+- urban expansion or development
+- land-use changes (residential, commercial, industrial)
+- large roads or highways
+- airports or large infrastructure
+
+Think:
+"What large-scale change in land use or built environment would I see
+by comparing two aerial images?"
+
+Examples:
+- "Where were forests cleared between 2014 and 2026?"
+- "What areas became urbanized from recent to present?"
+- "Find new large parking lots since 2014"
+- "Where has farmland increased from past to recent?"
+
+--------------------------------------------------
+
+7. change-high(region?, query, from_time, to_time, mode)
+
+Detect changes in SMALLER, FINE-GRAINED visual features between two
+time periods, using high-resolution imagery.
+
+Arguments:
+- from_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- to_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- mode: one of "new", "removed", "increased", "decreased"
+
+Use change-high when detecting change in SMALL features such as:
+- new swimming pools
+- solar panels installed or removed
+- rooftop changes (additions, AC units, structures)
+- individual buildings constructed or demolished
+- small construction features
+- vehicles or small objects appearing/disappearing
+- detailed building-level changes
+
+Think:
+"What small-scale change would I need high-resolution imagery to detect?"
+
+Examples:
+- "Where were swimming pools added between 2020 (recent) and 2026 (present)?"
+- "Find new solar panels since 2014 (past)"
+- "What buildings were constructed from recent to present?"
+- "Where have rooftops changed between past and present?"
+
+--------------------------------------------------
+
+TIME PERIOD GUIDANCE (IMPORTANT):
+- "recent" to "present" (2020-2026): Shows changes in the PAST 5 YEARS.
+  Use for current trends, recent development, short-term changes.
+- "past" to "present" (2014-2026): Shows changes over the PAST 10 YEARS.
+  Use for long-term transformation, urbanization, major land-use shifts.
+- "past" to "recent" (2014-2020): Shows changes in an EARLIER 6-YEAR WINDOW.
+  Use for historical comparison before recent developments.
+
+When the user says "recent changes" or "what changed recently", use from_time="recent", to_time="present".
+When the user says "over the last decade" or "long-term change", use from_time="past", to_time="present".
+When the user specifies exact years, map them to the nearest time period.
+
+The query describes WHAT to look for. The from_time/to_time describe WHEN.
+The mode describes the DIRECTION of change.
+
 ==================================================
 IMPORTANT: MODALITY DUALITY
 ==================================================
@@ -171,37 +251,22 @@ Some concepts can legitimately be found both through POI and imagery.
 
 Examples:
 
-- baseball fields → POI + vision-low
-- basketball courts → POI + vision-low
-- parking lots → POI + vision-low
-- swimming pools → POI + vision-high
+- baseball fields → POI + vision-high
+- basketball courts → POI + vision-high
+- parking lots → POI + vision-high
+- swimming pools → vision-high
 - golf courses → POI + vision-low
-- airports → POI + vision-low
-- hospitals → POI + potentially vision-low
-- schools → POI + potentially vision-low
+- airports → POI
+- airplanes -> vision-high
+- hospitals → POI
+- schools → POI
+- red buildings -> vision-high
 
 The correct choice depends on the user's intent.
 
 Use POI when the user is asking for known/listed facilities or places.
 
 Use vision when the user is asking what physically exists or is visible in the imagery.
-
-For example:
-
-"Find baseball fields in Palm Springs"
-→ The query is about physical fields. Prefer vision-low, and use POI as well if combining both sources improves recall.
-
-"Find baseball field POIs in Palm Springs"
-→ Use POI.
-
-"Find baseball fields visible in satellite imagery"
-→ Use vision-low.
-
-"Find large parking lots in Palm Springs"
-→ Prefer vision-low.
-
-"Find parking lots near restaurants"
-→ POI can be appropriate if the intent is to find known parking facilities, but vision-low should be considered if the intent is to identify physical parking areas from imagery.
 
 "Find swimming pools in wealthy neighborhoods"
 → demo + vision-high. Use POI as well only if the query is explicitly about listed facilities.
@@ -210,7 +275,7 @@ For example:
 → demo + poi.
 
 "Find large hospitals surrounded by parking lots"
-→ POI or vision-low for hospitals depending on intent, and vision-low for parking lots.
+→ POIfor hospitals depending on intent, and vision-low for parking lots.
 
 When two modalities answer complementary parts of the same request, use both.
 
@@ -230,8 +295,6 @@ Examples:
 - farmland
 - forest
 - large parking lot
-- baseball field
-- basketball field
 - industrial facility
 - warehouse
 - large construction site
@@ -243,6 +306,7 @@ Examples:
 - swimming pool
 - individual vehicle
 - solar panel
+- baseball or basketball fields
 - small structure
 - rooftop equipment
 - detailed building feature
@@ -284,7 +348,7 @@ IMPORTANT INTENT RULES
 "POI", "places", "businesses", "facilities", "amenities", "nearby services", "listed locations"
 → strongly favor POI.
 
-"population", "households", "income", "poverty", "age", "unemployment", "density", "education"
+"population", "households", "income", "poverty", "age", "unemployment", "density", "education", "hurricanes", "areas with high AQI"
 → strongly favor demo when they describe geographic/demographic properties.
 
 Words such as "field", "pool", "parking lot", "airport", "hospital", "school", etc. MUST NOT automatically determine the modality. Interpret the complete request.
@@ -299,16 +363,16 @@ Query:
 Plan:
 a = geocode("Los Angeles")
 b = demo(a, "low-income neighborhoods")
-c = vision-low(b, "baseball fields")
+c = vision-high(b, "baseball fields")
 output = c
 
 Reason:
-"low-income neighborhoods" is demographic; baseball fields are physical objects and the query does not ask for POI records.
+"low-income neighborhoods" is demographic; baseball fields are physical objects.
 
 --------------------------------------------------
 
 Query:
-"Find baseball field POIs in low-income neighborhoods in Los Angeles"
+"Find known baseball field in low-income neighborhoods in Los Angeles"
 
 Plan:
 a = geocode("Los Angeles")
@@ -316,7 +380,7 @@ b = demo(a, "low-income neighborhoods")
 output = poi(b, "baseball fields")
 
 Reason:
-The explicit POI intent overrides the physical-object interpretation.
+The explicit POI intent ("known") overrides the physical-object interpretation.
 
 --------------------------------------------------
 
@@ -325,8 +389,9 @@ Query:
 
 Plan:
 a = poi("transit stations")
-b = vision-low(a, "baseball fields")
-output = b
+b = buffer(a, 2)
+b = vision-high(b, "baseball fields")
+output = c
 
 Reason:
 Transit stations are naturally POIs; baseball fields are physical objects. The two modalities provide complementary information.
@@ -382,9 +447,82 @@ The industrial facility is a large object; solar panels are fine-grained visual 
 --------------------------------------------------
 
 Query:
-"Find areas where new buildings appeared"
+"Find areas where new buildings appeared recently"
 
-This is a change-detection query. Use the change capability if available in the tool set. Do not reinterpret it as a normal static vision query.
+Plan:
+a = change-high("new buildings", "recent", "present", "new")
+output = a
+
+Reason:
+This is a change-detection query. Use the change function to find areas where new buildings appeared between time periods.
+
+Query:
+"Find new construction in Los Angeles since 2014"
+
+Plan:
+a = geocode("Los Angeles")
+output = change-low(a, "new construction", "past", "present", "new")
+
+Reason:
+The query asks about what was built (new construction) since 2014 (past) to now (present).
+
+Query:
+"Find potential locations  that are near high-density elderly populations, accessible by major roads and transit, outside flood-prone areas, and within 5km of a hospital and fire station."
+
+Plan:
+a = demo("high-density elderly populations")
+b = buffer(a, 2)
+c = vision-low("major roads")
+d = buffer(c, 2)
+e = poi("transit stations")
+f = buffer(e, 2)
+g = poi("hospitals")
+h = buffer(g, 5)
+i = poi("fire stations")
+j = buffer(i, 5)
+k = intersection(b, d)
+l = intersection(k, f)
+m = intersection(l, h)
+n = intersection(m, j)
+o = demo("flood-prone areas")
+output = difference(n, o)
+
+Query:
+“Find suitable locations for emergency shelters in areas with high population density and high elderly populations, close to major roads and hospitals, but outside flood-prone areas, and with large buildings that have visible rooftop solar panels.”
+
+Plan:
+a = demo("high population density")
+b = demo("high elderly population")
+c = intersection(a, b)
+d = vision-high(c, "large buildings with rooftop solar panels")
+f = vision-low(c, "major roads")
+g = buffer(f, 2)
+h = poi(c, "hospitals")
+i = buffer(h, 5)
+j = demo(c, "flood-prone areas")
+k = intersection(d, g)
+l = intersection(k, i)
+m = difference(l, j)
+output = intersection(m, d)
+
+
+Query:
+“Find areas in California where new large industrial facilities appeared between 2014 and 2026, in low-income communities with high unemployment, within 5 km of a major highway and fire station, outside flood-prone areas, and with visible rooftop solar panels.”
+
+Plan:
+a = demo("low-income communities")
+b = demo(a, "high unemployment")
+c = change-low(b, "large industrial facilities", "past", "present", "new")
+d = vision-low(b, "major highways")
+e = buffer(d, 5)
+f = poi(b, "fire stations")
+g = buffer(f, 5)
+h = demo(b, "flood-prone areas")
+i = difference(c, h)
+j = intersection(i, e)
+k = intersection(j, g)
+output = vision-high(k, "rooftop solar panels")
+
 
 ==================================================
 AVAILABLE FUNCTIONS
@@ -399,6 +537,10 @@ poi(region?, query)
 vision-high(region?, query)
 
 vision-low(region?, query)
+
+change-low(region?, query, from_time, to_time, mode)
+
+change-high(region?, query, from_time, to_time, mode)
 
 buffer(region, km)
 
@@ -469,6 +611,31 @@ class PipelineStep:
                     f"Unsupported resolution '{resolution}' in step {self.step_id}"
                 )
             self.parameters["resolution"] = resolution
+        if self.operation == "change":
+            resolution = self.parameters.get("resolution") or config.DEFAULT_RESOLUTION
+            if resolution not in SUPPORTED_RESOLUTIONS:
+                raise ValueError(
+                    f"Unsupported resolution '{resolution}' in step {self.step_id}"
+                )
+            self.parameters["resolution"] = resolution
+            from_time = self.parameters.get("from_time")
+            to_time = self.parameters.get("to_time")
+            mode = self.parameters.get("mode")
+            if from_time not in SUPPORTED_TIME_PERIODS:
+                raise ValueError(
+                    f"Unsupported from_time '{from_time}' in step {self.step_id}. "
+                    f"Must be one of {SUPPORTED_TIME_PERIODS}."
+                )
+            if to_time not in SUPPORTED_TIME_PERIODS:
+                raise ValueError(
+                    f"Unsupported to_time '{to_time}' in step {self.step_id}. "
+                    f"Must be one of {SUPPORTED_TIME_PERIODS}."
+                )
+            if mode not in SUPPORTED_CHANGE_MODES:
+                raise ValueError(
+                    f"Unsupported change mode '{mode}' in step {self.step_id}. "
+                    f"Must be one of {SUPPORTED_CHANGE_MODES}."
+                )
 
 
 @dataclass
@@ -502,6 +669,8 @@ _FUNC_MAP = {
     "poi": ("poi", None, None),
     "vision-high": ("vision", "high", None),
     "vision-low": ("vision", "low", None),
+    "change-high": ("change", "high", None),
+    "change-low": ("change", "low", None),
     "buffer": ("tool", None, "buffer"),
     "intersection": ("tool", None, "intersection"),
     "union": ("tool", None, "union"),
@@ -528,6 +697,9 @@ _FUZZ_MAX_ARGS = {
     ("demo", None): 2,
     ("poi", None): 2,
     ("vision", None): 2,
+    ("change", None): 5,
+    ("change", "high"): 5,
+    ("change", "low"): 5,
     ("tool", "buffer"): 2,
 }
 
@@ -666,6 +838,22 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
             raise ValueError(f"geocode() needs a string place name: {line!r}")
         parameters["target"] = text_args[0]
         inputs = []
+
+    elif operation == "change":
+        # change(region?, query, from_time, to_time, mode)
+        # The LLM may quote time/mode ("past", "new") so they land in
+        # text_args, or leave them bare so they land in var_args.
+        # Strategy: pull region from var_args (if any), then consume the
+        # remaining text_args as query + from_time + to_time + mode.
+        if len(text_args) < 4:
+            raise ValueError(
+                f"change() needs query, from_time, to_time, mode as strings: {line!r}"
+            )
+        parameters["target"] = text_args[0]
+        parameters["from_time"] = text_args[1]
+        parameters["to_time"] = text_args[2]
+        parameters["mode"] = text_args[3]
+        inputs = var_args[:1] if var_args else []
 
     elif operation == "demo" or operation == "poi" or (operation == "vision"):
         if not text_args:

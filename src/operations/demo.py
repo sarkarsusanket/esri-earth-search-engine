@@ -17,7 +17,7 @@ def search_demographics(target: Optional[str],
                          ae_embeddings: torch.Tensor,
                          clip_model: torch.nn.Module,
                          text_embedder: torch.nn.Module,
-                         top_k: int = config.DEMO_TOP_K_DEFAULT) -> gpd.GeoDataFrame:
+                        ) -> gpd.GeoDataFrame:
     """Rank demographic polygons by similarity to a free-text query, optionally
     restricted to a prior region.
 
@@ -52,9 +52,11 @@ def search_demographics(target: Optional[str],
 
     scores = _min_max_normalize(scores)
 
-    top_indices = np.argsort(scores)[::-1][:top_k]
-    matched = candidates.iloc[top_indices].copy()
-    matched[SCORE_COL] = scores[top_indices]
+    above_threshold_indices = np.where(scores > 0.90)[0]
+    sorted_above_indices = above_threshold_indices[np.argsort(scores[above_threshold_indices])[::-1]]
+
+    matched = candidates.iloc[sorted_above_indices].copy()
+    matched[SCORE_COL] = scores[sorted_above_indices]
     return ensure_crs(matched)
 
 

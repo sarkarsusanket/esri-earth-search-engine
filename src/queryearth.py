@@ -60,9 +60,19 @@ class QueryEarth:
             else:
                 print(f"No vision index found for resolution '{resolution}' at {folder} (skipping).")
 
+        vision_year_indices = {}
+        for year, res_map in config.VISION_YEAR_INDEX_DIRS.items():
+            vision_year_indices[year] = {}
+            for resolution, folder in res_map.items():
+                if os.path.isdir(folder) and os.path.exists(os.path.join(folder, "meta.json")):
+                    vision_year_indices[year][resolution] = TurboQuantSearchIndex(folder)
+                else:
+                    print(f"No vision index for year {year}, resolution '{resolution}' at {folder} (skipping).")
+
         self.context = PipelineContext(
             demo_gdf, ae_embeddings, demo_model, text_embedder,
-            vision_encoder, vision_indices, poi_gdf, poi_embedding_df, grounder
+            vision_encoder, vision_indices, poi_gdf, poi_embedding_df, grounder,
+            vision_year_indices=vision_year_indices
         )
         self.executor = PipelineExecutor(self.context)
 

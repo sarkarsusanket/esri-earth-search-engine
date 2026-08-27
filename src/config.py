@@ -56,6 +56,32 @@ VISION_INDEX_DIRS = {
     "high": rf"E:\Data\query-earth\embeddings\turboquant\vision-high-2026",
 }
 DEFAULT_RESOLUTION = "high"
+RESOLUTION_DIST_MAP = {
+    "low": 2900,
+    "high": 290
+}
+
+# Time-period labels for change detection. Each maps to a year whose
+# vision index folder is named vision-{resolution}-{year}.
+VISION_YEARS = {
+    "past":    2014,
+    "recent":  2020,
+    "present": 2026,
+}
+
+# Per-year vision index directories, keyed as {year: {resolution: path}}.
+VISION_YEAR_INDEX_DIRS = {
+    year: {
+        res: rf"E:\Data\query-earth\embeddings\turboquant\vision-{res}-{year}"
+        for res in ("low", "high")
+    }
+    for year in VISION_YEARS.values()
+}
+
+# Maximum distance (in degrees ~ metres) between two points to consider
+# them the "same location" across time periods for change detection.
+# ~0.001 ≈ 111 m at the equator.
+CHANGE_DISTANCE_THRESHOLD = 0.001
 
 # Text encoder used to embed vision *queries* into the same space the offline
 # image embeddings were computed in. This must match whatever model produced
@@ -81,7 +107,4 @@ ROUTER_N_THREADS = max(1, (os.cpu_count() or 4) - 1)
 # ------------------------------------------------------------------
 # Search defaults
 # ------------------------------------------------------------------
-DEMO_TOP_K_DEFAULT = 30
-VISION_TOP_N_DEFAULT = 100
 VISION_NPROBE_DEFAULT = 24  # IVF clusters probed per global (non-spatially-filtered) vision search
-POI_THRESHOLD = 0.48 # Threshhold for poi search

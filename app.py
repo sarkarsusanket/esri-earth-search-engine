@@ -5,10 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Add module path and import queryearth
-sys.path.append(r"D:\Code\query-earth\dlpk")
+sys.path.append(r"D:\Code\query-earth\src")
 import queryearth
 
-app = FastAPI(title="QueryEarth API")
+app = FastAPI(title="ESRI Earth Search Engine API")
 
 # Enable CORS for frontend communication
 app.add_middleware(
@@ -25,7 +25,7 @@ qe = None
 def startup_event():
     """Runs once when Uvicorn starts."""
     global qe
-    print("Initializing QueryEarth engine...")
+    print("Initializing engine...")
     qe = queryearth.QueryEarth()
     qe.initialize()
     print("QueryEarth engine initialized successfully.")
@@ -53,7 +53,7 @@ def api_predict(req: QueryRequest):
     
     try:
         # Run inference using your local model
-        gdf = qe.predict(req.query)
+        gdf = qe.find(req.query)
         
         # Calculate representative point (longitude/latitude) for mapping
         if not gdf.empty:
@@ -66,6 +66,9 @@ def api_predict(req: QueryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+import uvicorn
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    except KeyboardInterrupt:
+        print("\nServer stopped gracefully.")

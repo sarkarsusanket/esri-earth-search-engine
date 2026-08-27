@@ -17,6 +17,7 @@ from operations import geocode as geocode_op
 from operations import demo as demo_op
 from operations import vision as vision_op
 from operations import poi as poi_op
+from operations import change as change_op
 from operations.tool import TOOL_DISPATCH
 
 
@@ -26,7 +27,7 @@ class PipelineContext:
     than once per step or once per query."""
 
     def __init__(self, demo_gdf, ae_embeddings, demo_model, text_embedder, vision_encoder, vision_indices,
-                 poi_gdf=None, poi_embedding_df=None, grounder=None):
+                 poi_gdf=None, poi_embedding_df=None, grounder=None, vision_year_indices=None):
         self.demo_gdf = demo_gdf
         self.ae_embeddings = ae_embeddings
         self.demo_model = demo_model
@@ -36,6 +37,7 @@ class PipelineContext:
         self.poi_gdf = poi_gdf
         self.poi_embedding_df = poi_embedding_df
         self.grounder = grounder
+        self.vision_year_indices = vision_year_indices or {}  # {year: {resolution: TurboQuantSearchIndex}}
 
 
 class PipelineExecutor:
@@ -93,6 +95,20 @@ class PipelineExecutor:
                 poi_gdf=self.context.poi_gdf,
                 poi_embedding_df=self.context.poi_embedding_df,
                 text_embedder=self.context.text_embedder,
+            )
+
+        elif step.operation == "change":
+            region = self._single_input(step)
+            resolution = params.get("resolution")
+            result = change_op.change(
+                query=params.get("target"),
+                from_time=params.get("from_time"),
+                to_time=params.get("to_time"),
+                mode=params.get("mode"),
+                region=region,
+                vision_encoder=self.context.vision_encoder,
+                vision_year_indices=self.context.vision_year_indices,
+                resolution=resolution,
             )
 
         elif step.operation == "tool":

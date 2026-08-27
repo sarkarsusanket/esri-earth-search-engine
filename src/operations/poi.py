@@ -115,7 +115,7 @@ def search_poi(
     poi_gdf: gpd.GeoDataFrame,
     poi_embedding_df: pd.DataFrame,
     text_embedder,
-    threshold: float = config.POI_THRESHOLD,
+    threshold: float = 0.48,
 ) -> gpd.GeoDataFrame:
     """Search POIs by specificity: amenity class keyword > brand name > semantic."""
     if not target:

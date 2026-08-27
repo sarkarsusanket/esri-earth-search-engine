@@ -78,11 +78,6 @@
   .qe-empty{ padding:22px 16px 26px; text-align:center; color:#7a7a7a; font-size:.85rem; }
 
   calcite-list-item::part(container){ cursor:pointer; }
-  .qe-score{
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size:.72rem; font-weight:600; color: var(--qe-ai-violet);
-    background: var(--qe-ai-violet-soft); border-radius:0px; padding:2px 8px;
-  }
 
   /* ---------- bottom-right wayback time control ---------- */
   .qe-timeline-float{
@@ -124,7 +119,6 @@
 
     <arcgis-map id="mapEl" basemap="osm" center="-121.95,37.42" zoom="9">
       <arcgis-zoom slot="top-right"></arcgis-zoom>
-      <arcgis-locate slot="top-right"></arcgis-locate>
     </arcgis-map>
 
     <!-- ============ floating natural-language search (top left) ============ -->
@@ -139,7 +133,6 @@
         <div class="qe-results" id="resultsWrap" hidden>
           <div class="qe-results-meta">
             <span id="resultsMeta">—</span>
-            <calcite-chip scale="s" icon="cursor-click">click a result to zoom</calcite-chip>
           </div>
           <calcite-list id="resultsList" selection-appearance="border" label="ESRI Earth Engine results"></calcite-list>
         </div>
@@ -227,18 +220,25 @@
   }
 
   async function setupMap(){
-    const [WebTileLayer, VectorTileLayer, GraphicsLayer, GraphicMod, PointMod] = await $arcgis.import([
+    const [WebTileLayer, VectorTileLayer, GraphicsLayer, GraphicMod, PointMod, Measurement] = await $arcgis.import([
       "esri/layers/WebTileLayer",
       "esri/layers/VectorTileLayer",
       "esri/layers/GraphicsLayer",
       "esri/Graphic",
       "esri/geometry/Point",
+      "esri/widgets/Measurement",
     ]);
     Graphic = GraphicMod;
     Point = PointMod;
 
     const map = mapEl.map;
     view = mapEl.view;
+
+    const measurementWidget = new Measurement({
+      view: view,
+      position: "top-right",
+    });
+    view.ui.add(measurementWidget, "top-right");
 
     graphicsLayer = new GraphicsLayer({ title: "QueryEarth results" });
     map.add(graphicsLayer);
@@ -410,11 +410,6 @@
       const item = document.createElement("calcite-list-item");
       item.label = r.name;
       item.description = r.cat;
-      const scoreEl = document.createElement("span");
-      scoreEl.slot = "content-end";
-      scoreEl.className = "qe-score";
-      scoreEl.textContent = `${Math.round(r.score * 100)}%`;
-      item.appendChild(scoreEl);
       item.addEventListener("click", () => focusResult(r));
       resultsList.appendChild(item);
 
@@ -427,10 +422,10 @@
           size: idx === 0 ? 13 : 10,
           outline: { color: "#ffffff", width: 1.5 },
         },
-        attributes: { name: r.name, cat: r.cat, score: r.score },
+        attributes: { name: r.name, cat: r.cat },
         popupTemplate: {
           title: "{name}",
-          content: `${r.cat} · match confidence {score}`,
+          content: `${r.cat}`,
         },
       }));
     });
