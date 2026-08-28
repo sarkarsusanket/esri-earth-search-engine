@@ -16,6 +16,6 @@ def compute_threshold(scores):
     Returns:
         binary array of same shape as scores, 1=pass, 0=fail
     """
-    threshold = 0.2
+    threshold = max(0.2, max(scores)-0.07)
     mask = (scores > threshold).astype(int)
     return mask

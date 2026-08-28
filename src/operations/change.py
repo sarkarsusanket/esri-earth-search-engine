@@ -21,6 +21,7 @@ from typing import Optional, Dict, List, Tuple
 
 import numpy as np
 import geopandas as gpd
+from scipy.spatial import cKDTree
 from shapely.geometry import Point
 
 import config
@@ -33,23 +34,21 @@ def _nearest_match(
     to_pts: List[Tuple[float, float, float]],
     threshold: float,
 ) -> Dict[int, int]:
-    """For each point in *to_pts*, find the nearest point in *from_pts*
-    within *threshold* degrees.  Returns {to_idx: from_idx}."""
+    """Finds nearest neighbor within threshold using KDTree for O(N log M) performance."""
     if not from_pts or not to_pts:
         return {}
 
-    from_arr = np.array(from_pts)  # (N, 3) — score, lat, lon
-    to_arr = np.array(to_pts)
+    # (score, lat, lon) -> extract [lat, lon] coordinates
+    from_coords = np.array([(p[1], p[2]) for p in from_pts])
+    to_coords = np.array([(p[1], p[2]) for p in to_pts])
+
+    tree = cKDTree(from_coords)
+    dists, indices = tree.query(to_coords, distance_upper_bound=threshold)
 
     matches: Dict[int, int] = {}
-    for ti in range(len(to_arr)):
-        dists = np.sqrt(
-            (from_arr[:, 1] - to_arr[ti, 1]) ** 2
-            + (from_arr[:, 2] - to_pts[ti][2]) ** 2
-        )
-        nearest = int(np.argmin(dists))
-        if dists[nearest] <= threshold:
-            matches[ti] = nearest
+    for to_idx, (dist, from_idx) in enumerate(zip(dists, indices)):
+        if dist <= threshold:
+            matches[to_idx] = int(from_idx)
     return matches
 
 
@@ -120,16 +119,16 @@ def change(
         query_np, region=region, nprobe=nprobe,
     )
 
-    # Adaptive Thresholding
-    from_mask = compute_threshold(from_scores)
-    from_scores = from_scores[from_mask == 1]
-    from_lat = from_lat[from_mask == 1]
-    from_lon = from_lon[from_mask == 1]
+    # # Adaptive Thresholding
+    # from_mask = compute_threshold(from_scores)
+    # from_scores = from_scores[from_mask == 1]
+    # from_lat = from_lat[from_mask == 1]
+    # from_lon = from_lon[from_mask == 1]
 
-    to_mask = compute_threshold(to_scores)
-    to_scores = to_scores[to_mask == 1]
-    to_lat = to_lat[to_mask == 1]
-    to_lon = to_lon[to_mask == 1]
+    # to_mask = compute_threshold(to_scores)
+    # to_scores = to_scores[to_mask == 1]
+    # to_lat = to_lat[to_mask == 1]
+    # to_lon = to_lon[to_mask == 1]
 
     if len(from_scores) == 0 and len(to_scores) == 0:
         print("[change] No results in either time period.")
@@ -157,11 +156,17 @@ def change(
         gdf_to.to_file(f"results/to_pts_{to_time}_{to_year}.shp")
 
     # --- Match points across time periods ---
-    threshold = config.CHANGE_DISTANCE_THRESHOLD
-    matches = _nearest_match(from_pts, to_pts, threshold)
+    matches = _nearest_match(from_pts, to_pts, config.CHANGE_DISTANCE_THRESHOLD)
 
     to_matched = set(matches.keys())
     from_matched = set(matches.values())
+
+    gdf_to = gpd.GeoDataFrame(
+        {"to_score": [to_pts[p][0] for p in to_matched], "from_score": [from_pts[p][0] for p in from_matched], "minus_score": [to_pts[a][0]-from_pts[b][0] for a, b in matches.items()]},
+        geometry=[Point(to_pts[p][2], to_pts[p][1]) for p in to_matched],
+        crs="EPSG:4326"
+    )
+    gdf_to.to_file(f"results/to_matchged_{to_time}_{to_year}.shp")
 
     # --- Collect results according to mode ---
     result_points: List[Point] = []
@@ -170,17 +175,17 @@ def change(
 
     if mode == "new":
         for ti, fi in matches.items():
-            if to_pts[ti][0] - from_pts[fi][0] > 0.1:
-                result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
-                result_scores.append(to_pts[ti][0] - from_pts[fi][0])
-                result_times.append(to_time)
+                if to_pts[ti][0] - from_pts[fi][0] > 0.15 and to_pts[ti][0] > 0.2:
+                    result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
+                    result_scores.append(to_pts[ti][0] - from_pts[fi][0])
+                    result_times.append(to_time)
 
     elif mode == "removed":
         for ti, fi in matches.items():
-            if from_pts[fi][0] - to_pts[ti][0] > 0.1:
-                result_points.append(Point(from_pts[fi][2], from_pts[fi][1]))
-                result_scores.append(from_pts[fi][0] - to_pts[ti][0])
-                result_times.append(from_time)
+                if from_pts[fi][0] - to_pts[ti][0] > 0.15 and from_pts[fi][0] > 0.2:
+                    result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
+                    result_scores.append(to_pts[ti][0] - from_pts[fi][0])
+                    result_times.append(to_time)
 
     elif mode == "increased":
         for ti, fi in matches.items():
