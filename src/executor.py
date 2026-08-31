@@ -16,7 +16,7 @@ from query_parser import QueryPlan, PipelineStep
 from operations import geocode as geocode_op
 from operations import demo as demo_op
 from operations import vision as vision_op
-from operations import poi as poi_op
+from operations import osm as osm_op
 from operations import change as change_op
 from operations.tool import TOOL_DISPATCH
 
@@ -27,17 +27,17 @@ class PipelineContext:
     than once per step or once per query."""
 
     def __init__(self, demo_gdf, ae_embeddings, demo_model, text_embedder, vision_encoder, vision_indices,
-                 poi_gdf=None, poi_embedding_df=None, grounder=None, vision_year_indices=None):
+                 grounder=None, vision_year_indices=None, osm_data=None, osm_category_embeddings=None):
         self.demo_gdf = demo_gdf
         self.ae_embeddings = ae_embeddings
         self.demo_model = demo_model
         self.text_embedder = text_embedder
         self.vision_encoder = vision_encoder
         self.vision_indices = vision_indices  # dict: resolution -> TurboQuantSearchIndex
-        self.poi_gdf = poi_gdf
-        self.poi_embedding_df = poi_embedding_df
         self.grounder = grounder
         self.vision_year_indices = vision_year_indices or {}  # {year: {resolution: TurboQuantSearchIndex}}
+        self.osm_data = osm_data or {}  # {mode: GeoDataFrame}
+        self.osm_category_embeddings = osm_category_embeddings or {}  # {mode: DataFrame with category+embedding}
 
 
 class PipelineExecutor:
@@ -87,14 +87,16 @@ class PipelineExecutor:
                 resolution=resolution,
             )
 
-        elif step.operation == "poi":
+        elif step.operation == "osm":
             region = self._single_input(step)
-            result = poi_op.search_poi(
-                target=params.get("target"),
+            result = osm_op.search_osm(
+                mode=params.get("osm_mode"),
+                query=params.get("target"),
                 region=region,
-                poi_gdf=self.context.poi_gdf,
-                poi_embedding_df=self.context.poi_embedding_df,
+                osm_data=self.context.osm_data,
+                method=params.get("osm_method", "keyword"),
                 text_embedder=self.context.text_embedder,
+                category_embeddings=self.context.osm_category_embeddings,
             )
 
         elif step.operation == "change":

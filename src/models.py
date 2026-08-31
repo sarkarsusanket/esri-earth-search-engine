@@ -117,25 +117,6 @@ def load_demographic_assets(
 
 
 # ------------------------------------------------------------------
-# POI assets
-# ------------------------------------------------------------------
-def load_poi_assets(
-    poi_path: str = config.POI_PATH,
-    poi_embedding_path: str = config.POI_EMBEDDING_PATH,
-):
-    """Load the POI GeoDataFrame (amenity/name/point geometry) and the
-    amenity-class embedding table (amenities + 384-dim embedding) used by
-    POI similarity search. Both are fully local, plain parquet loads."""
-    print("Loading POI GeoParquet...")
-    poi_gdf = gpd.read_parquet(poi_path)
-
-    print("Loading POI amenity embeddings...")
-    poi_embedding_df = pd.read_parquet(poi_embedding_path)
-
-    return poi_gdf, poi_embedding_df
-
-
-# ------------------------------------------------------------------
 # Vision text encoder (OpenCLIP) — loaded once, shared by every vision query.
 # Encodes the *query text* into the same space the offline TurboQuant image
 # embeddings live in; unrelated to TurboQuant's own (image-side) compression.

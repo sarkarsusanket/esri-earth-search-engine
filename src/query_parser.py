@@ -30,7 +30,7 @@ load_dotenv()
 
 import config
 
-SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "poi", "change"}
+SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "osm", "change"}
 SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
 SUPPORTED_TIME_PERIODS = set(config.VISION_YEARS.keys())
@@ -89,34 +89,69 @@ Do NOT use demo merely because a word such as "people", "income", "age", or "pop
 
 --------------------------------------------------
 
-3. poi(region?, query)
+3. osm(region?, mode, query, method?)
 
-Point-of-interest search over known/discrete places, amenities, businesses, services, and facilities represented in the POI database.
+OpenStreetMap search over structured geographic data. The mode determines which dataset to search, and the query filters by category or name.
+
+Available modes and what they contain:
+- "roads":      highway types (primary, secondary, motorway, residential, footway, cycleway, etc.)
+                Category column: highway
+- "waterways":  waterway types (river, stream, canal, dam, waterfall, etc.)
+                Category column: waterway
+- "buildings":  building footprints with optional amenity type and name
+                Category column: amenity (mostly empty for generic buildings)
+- "landuse":    land-use classifications (residential, commercial, industrial, forest, farmland, etc.)
+                Category column: landuse
+- "natural":    natural features (peak, beach, forest, bay, cliff, desert, etc.)
+                Category column: natural
+- "pois":       points of interest with amenity type and name
+                Category column: amenity (restaurant, school, hospital, bank, etc.)
+
+Method parameter (optional, default="keyword"):
+- "keyword":   Direct category/name matching (fast, exact matches)
+- "semantic":  Embedding-based similarity search (flexible, fuzzy matching)
+
+When method="keyword" is used but no matches are found, the search
+automatically falls back to semantic search if embeddings are available.
 
 Examples:
-- restaurants
-- coffee shops
-- hospitals
-- pharmacies
-- banks
-- gas stations
-- schools
-- airports
-- transit stations
-- emergency services
-- hotels
-- grocery stores
+- osm("primary", "roads") - find primary highways (keyword match)
+- osm("rivers", "waterways") - find rivers (keyword match)
+- osm("hospitals", "pois") - find hospitals (keyword match)
+- osm("residential", "landuse") - find residential land use (keyword match)
+- osm("forest", "natural") - find natural forests (keyword match)
+- osm(a, "restaurants", "buildings") - find restaurant buildings in region a
+- osm("emergency services", "pois", "semantic") - find emergency services via semantic matching
+- osm(a, "major roads", "roads", "semantic") - find major roads via semantic matching
 
-POI is appropriate when the user's intent is to find known/listed places or services.
+Use method="keyword" when:
+- The query is a direct category name (e.g. "primary", "river", "hospital")
+- You want exact, fast matches
 
-IMPORTANT:
-POI is NOT automatically the correct modality for every physical object that happens to have a POI category.
+Use method="semantic" when:
+- The query is a concept or phrase (e.g. "emergency services", "major roads")
+- You want fuzzy/flexible matching against category names
+- Direct keyword matching might miss relevant results
 
-Some physical objects exist both as POIs and as things visible in imagery. These are ambiguous concepts and must be routed according to user intent.
+Use OSM when the query is about:
+- Specific road/highway types (primary, motorway, footway, etc.)
+- Water features (rivers, streams, canals, dams)
+- Land-use patterns (residential, commercial, industrial, farmland)
+- Natural features (peaks, beaches, forests, cliffs)
+- Named businesses or facilities (with amenity type)
+- Building types or specific named buildings
+
+IMPORTANT: OSM is for structured categorical data. Use it when the user asks about a specific class or type of geographic feature that exists in OpenStreetMap data.
+
+Do NOT use OSM for:
+- Visual appearance of objects (use vision instead)
+- Color, texture, or material properties (use vision instead)
+- Demographic or statistical properties (use demo instead)
+- Change detection over time (use change instead)
 
 --------------------------------------------------
 
-4. vision-low(region?, query)
+5. vision-low(region?, query)
 
 Visual search over LARGE physical objects, structures, and land-use patterns that can be reliably identified from lower-resolution aerial/satellite imagery.
 
@@ -143,7 +178,7 @@ Use vision-low when the user's intent is primarily about the physical appearance
 
 --------------------------------------------------
 
-5. vision-high(region?, query)
+6. vision-high(region?, query)
 
 Visual search over SMALLER, FINE-GRAINED, or visually detailed objects that require high-resolution imagery.
 
@@ -165,7 +200,7 @@ Use vision-high when the requested object is too small or visually detailed for 
 
 --------------------------------------------------
 
-6. change-low(region?, query, from_time, to_time, mode)
+7. change-low(region?, query, from_time, to_time, mode)
 
 Detect changes in LARGE physical features and land-use patterns between two
 time periods, using lower-resolution imagery.
@@ -196,7 +231,7 @@ Examples:
 
 --------------------------------------------------
 
-7. change-high(region?, query, from_time, to_time, mode)
+8. change-high(region?, query, from_time, to_time, mode)
 
 Detect changes in SMALLER, FINE-GRAINED visual features between two
 time periods, using high-resolution imagery.
@@ -242,40 +277,80 @@ The query describes WHAT to look for. The from_time/to_time describe WHEN.
 The mode describes the DIRECTION of change.
 
 ==================================================
+IMPORTANT: OSM vs VISION ROUTING
+==================================================
+
+The key distinction is between STRUCTURED DATA and VISUAL APPEARANCE.
+
+OSM provides STRUCTURED categorical data from OpenStreetMap:
+- Road types, waterway types, land-use classes, natural feature types
+- Named places with amenity categories
+- This is EXACT categorical data, not visual detection
+
+VISION provides VISUAL appearance from satellite/aerial imagery:
+- Color, texture, material, physical shape
+- Things you can SEE in an image but are not in any database
+- "red buildings", "buildings with solar pools", "large warehouses"
+
+ROUTING RULES:
+- "primary highways" -> osm("primary", "roads") [structured road data]
+- "highways" -> you need to get teh union of osm("primary", "roads") / osm("secondary", "roads") and osm("tertiary", "roads")
+- "rivers" -> osm("rivers", "waterways") [structured waterway data]
+- "residential areas" -> osm("residential", "landuse") [structured landuse data]
+- "forests" -> osm("forest", "natural") [structured natural feature data]
+- "hospitals" -> osm("hospitals", "pois") 
+- "red buildings" -> vision-high("red buildings") [visual appearance]
+- "swimming pools" -> vision-high("swimming pools") [visual detection]
+- "large parking lots" -> vision-low("large parking lots") [visual detection]
+- "baseball fields" -> vision-high("baseball fields") [visual detection]
+- "wealthy neighborhoods" -> demo("wealthy neighborhoods") [demographic data]
+
+When a concept exists in both OSM and vision, use the user's intent:
+- "Find primary highways" -> osm [user wants the road network data]
+- "Find roads visible in the image" -> vision [user wants what's visible]
+- "Find all restaurants" -> osm("restaurents", "pois") [structured data about restaurants]
+- "Find red buildings" -> vision [color is a visual property]
+
+==================================================
 IMPORTANT: MODALITY DUALITY
 ==================================================
 
 Do NOT assume that every concept belongs to exactly one modality.
 
-Some concepts can legitimately be found both through POI and imagery.
+Some concepts can legitimately be found both through OSM/POI and imagery.
 
 Examples:
 
-- baseball fields → POI + vision-high
-- basketball courts → POI + vision-high
-- parking lots → POI + vision-high
-- swimming pools → vision-high
-- golf courses → POI + vision-low
-- airports → POI
-- airplanes -> vision-high
-- hospitals → POI
-- schools → POI
-- red buildings -> vision-high
+- baseball fields -> vision-high (visual detection)
+- basketball courts -> vision-high (visual detection)
+- parking lots -> vision-low (visual detection)
+- swimming pools -> vision-high (visual detection)
+- golf courses -> vision-low (visual detection)
+- airports -> osm("airports", "pois")
+- airplanes -> vision-high (visual detection)
+- hospitals -> osm("hospitals", "pois")
+- schools -> osm("schools", "pois")
+- red buildings -> vision-high (visual appearance)
+- primary roads -> osm("primary", "roads") (structured data)
+- rivers -> osm("rivers", "waterways") (structured data)
+- forests -> osm("forest", "natural") (structured data)
 
 The correct choice depends on the user's intent.
 
-Use POI when the user is asking for known/listed facilities or places.
+Use OSM when the user is asking about a specific category or class of geographic feature that exists in OpenStreetMap data.
 
 Use vision when the user is asking what physically exists or is visible in the imagery.
 
+Use POI when the user specifically wants listed/business places.
+
 "Find swimming pools in wealthy neighborhoods"
-→ demo + vision-high. Use POI as well only if the query is explicitly about listed facilities.
+-> demo + vision-high. Use OSM as well only if the query is explicitly about listed facilities.
 
 "Find hospitals in low-income neighborhoods"
-→ demo + poi.
+-> demo + osm("hospitals", "pois").
 
 "Find large hospitals surrounded by parking lots"
-→ POIfor hospitals depending on intent, and vision-low for parking lots.
+-> osm("hospitals", "pois") for hospitals, and vision-low for parking lots.
 
 When two modalities answer complementary parts of the same request, use both.
 
@@ -326,11 +401,11 @@ For every query:
 3. Determine what kind of information each concept represents:
    - geographic place
    - demographic/statistical property
-   - known POI/place
-   - large physical object/land-use pattern
-   - small/fine physical object
+   - structured OSM category (road type, waterway type, landuse, natural feature)
+   - large physical object/land-use pattern (visual)
+   - small/fine physical object (visual)
 4. Determine the appropriate modality for each concept.
-5. Check whether a concept is ambiguous between POI and vision.
+5. Check whether a concept is ambiguous between OSM/POI and vision.
 6. Resolve the ambiguity using the user's intent.
 7. If multiple modalities are genuinely needed, use multiple operations.
 8. Compose the resulting spatial constraints using buffer, intersection, union, difference, or add.
@@ -343,13 +418,16 @@ IMPORTANT INTENT RULES
 ==================================================
 
 "according to imagery", "visible", "seen from above", "physically present", "appears", "looks like"
-→ strongly favor vision.
+-> strongly favor vision.
 
 "POI", "places", "businesses", "facilities", "amenities", "nearby services", "listed locations"
-→ strongly favor POI.
+-> strongly favor osm.
 
 "population", "households", "income", "poverty", "age", "unemployment", "density", "education", "hurricanes", "areas with high AQI"
-→ strongly favor demo when they describe geographic/demographic properties.
+-> strongly favor demo when they describe geographic/demographic properties.
+
+"road types", "highway classification", "waterway network", "land use classification", "natural features"
+-> strongly favor osm.
 
 Words such as "field", "pool", "parking lot", "airport", "hospital", "school", etc. MUST NOT automatically determine the modality. Interpret the complete request.
 
@@ -367,34 +445,67 @@ c = vision-high(b, "baseball fields")
 output = c
 
 Reason:
-"low-income neighborhoods" is demographic; baseball fields are physical objects.
+"low-income neighborhoods" is demographic; baseball fields are physical objects visible in imagery.
 
 --------------------------------------------------
 
 Query:
-"Find known baseball field in low-income neighborhoods in Los Angeles"
+"Find primary highways in California"
+
+Plan:
+a = geocode("California")
+output = osm(a, "primary", "roads")
+
+Reason:
+Primary highways are structured road classification data from OSM.
+
+--------------------------------------------------
+
+Query:
+"Find rivers near Los Angeles"
 
 Plan:
 a = geocode("Los Angeles")
-b = demo(a, "low-income neighborhoods")
-output = poi(b, "baseball fields")
+output = osm(a, "rivers", "waterways")
 
 Reason:
-The explicit POI intent ("known") overrides the physical-object interpretation.
+Rivers are structured waterway data from OSM.
 
 --------------------------------------------------
 
 Query:
-"Find baseball fields near transit stations"
+"Find residential areas in San Francisco"
 
 Plan:
-a = poi("transit stations")
-b = buffer(a, 2)
-b = vision-high(b, "baseball fields")
-output = c
+a = geocode("San Francisco")
+output = osm(a, "residential", "landuse")
 
 Reason:
-Transit stations are naturally POIs; baseball fields are physical objects. The two modalities provide complementary information.
+Residential areas are structured landuse classification from OSM.
+
+--------------------------------------------------
+
+Query:
+"Find forests in California"
+
+Plan:
+a = geocode("California")
+output = osm(a, "forest", "natural")
+
+Reason:
+Forests are structured natural feature data from OSM.
+
+--------------------------------------------------
+
+Query:
+"Find hospitals in areas with many elderly residents"
+
+Plan:
+a = demo("areas with many elderly residents")
+output = osm(a, "hospitals", "pois")
+
+Reason:
+Hospitals are OSM POI data; elderly residents is demographic.
 
 --------------------------------------------------
 
@@ -405,14 +516,8 @@ Plan:
 a = demo("wealthy neighborhoods")
 output = vision-high(a, "swimming pools")
 
---------------------------------------------------
-
-Query:
-"Find hospitals in areas with many elderly residents"
-
-Plan:
-a = demo("areas with many elderly residents")
-output = poi(a, "hospitals")
+Reason:
+Swimming pools are visual objects detected in imagery.
 
 --------------------------------------------------
 
@@ -420,8 +525,11 @@ Query:
 "Find large parking lots near airports"
 
 Plan:
-a = poi("airports")
+a = osm("airports", "pois")
 output = vision-low(a, "large parking lots")
+
+Reason:
+Airports are OSM POI data; large parking lots are visual objects.
 
 --------------------------------------------------
 
@@ -430,19 +538,22 @@ Query:
 
 Plan:
 a = vision-low("large parking lots")
-output = poi(a, "restaurants")
+output = osm(a, "restaurants", "pois")
+
+Reason:
+Large parking lots are visual; restaurants are OSM POI data.
 
 --------------------------------------------------
 
 Query:
-"Find large industrial facilities with solar panels"
+"Find red buildings in Los Angeles"
 
 Plan:
-a = vision-low("large industrial facilities")
-output = vision-high(a, "solar panels")
+a = geocode("Los Angeles")
+output = vision-high(a, "red buildings")
 
 Reason:
-The industrial facility is a large object; solar panels are fine-grained visual objects.
+"Red" is a visual property (color) that can only be detected in imagery.
 
 --------------------------------------------------
 
@@ -454,7 +565,7 @@ a = change-high("new buildings", "recent", "present", "new")
 output = a
 
 Reason:
-This is a change-detection query. Use the change function to find areas where new buildings appeared between time periods.
+This is a change-detection query.
 
 Query:
 "Find new construction in Los Angeles since 2014"
@@ -467,18 +578,18 @@ Reason:
 The query asks about what was built (new construction) since 2014 (past) to now (present).
 
 Query:
-"Find potential locations  that are near high-density elderly populations, accessible by major roads and transit, outside flood-prone areas, and within 5km of a hospital and fire station."
+"Find potential locations that are near high-density elderly populations, accessible by major roads and transit, outside flood-prone areas, and within 5km of a hospital and fire station."
 
 Plan:
 a = demo("high-density elderly populations")
 b = buffer(a, 2)
-c = vision-low("major roads")
+c = osm("major highways", "roads")
 d = buffer(c, 2)
-e = poi("transit stations")
+e = osm("transit stations", "pois")
 f = buffer(e, 2)
-g = poi("hospitals")
+g = osm("hospitals", "pois")
 h = buffer(g, 5)
-i = poi("fire stations")
+i = osm("fire stations", "pois")
 j = buffer(i, 5)
 k = intersection(b, d)
 l = intersection(k, f)
@@ -488,16 +599,16 @@ o = demo("flood-prone areas")
 output = difference(n, o)
 
 Query:
-“Find suitable locations for emergency shelters in areas with high population density and high elderly populations, close to major roads and hospitals, but outside flood-prone areas, and with large buildings that have visible rooftop solar panels.”
+"Find suitable locations for emergency shelters in areas with high population density and high elderly populations, close to major roads and hospitals, but outside flood-prone areas, and with large buildings that have visible rooftop solar panels."
 
 Plan:
 a = demo("high population density")
 b = demo("high elderly population")
 c = intersection(a, b)
 d = vision-high(c, "large buildings with rooftop solar panels")
-f = vision-low(c, "major roads")
+f = osm(c, "major highways", "roads")
 g = buffer(f, 2)
-h = poi(c, "hospitals")
+h = osm(c, "hospitals", "pois")
 i = buffer(h, 5)
 j = demo(c, "flood-prone areas")
 k = intersection(d, g)
@@ -507,15 +618,15 @@ output = intersection(m, d)
 
 
 Query:
-“Find areas in California where new large industrial facilities appeared between 2014 and 2026, in low-income communities with high unemployment, within 5 km of a major highway and fire station, outside flood-prone areas, and with visible rooftop solar panels.”
+"Find areas in California where new large industrial facilities appeared between 2014 and 2026, in low-income communities with high unemployment, within 5 km of a major highway and fire station, outside flood-prone areas, and with visible rooftop solar panels."
 
 Plan:
 a = demo("low-income communities")
 b = demo(a, "high unemployment")
 c = change-low(b, "large industrial facilities", "past", "present", "new")
-d = vision-low(b, "major highways")
+d = osm(b, "major highways", "roads")
 e = buffer(d, 5)
-f = poi(b, "fire stations")
+f = osm(b, "fire stations", "pois")
 g = buffer(f, 5)
 h = demo(b, "flood-prone areas")
 i = difference(c, h)
@@ -532,7 +643,7 @@ geocode(place)
 
 demo(region?, query)
 
-poi(region?, query)
+osm(region?, mode, query, method?)
 
 vision-high(region?, query)
 
@@ -551,6 +662,17 @@ union(a, b)
 difference(a, b)
 
 add(a, b)
+
+==================================================
+OSM MODES REFERENCE
+==================================================
+
+roads:      highway column - primary, secondary, tertiary, motorway, residential, footway, cycleway, path, service, track, etc.
+waterways:  waterway column - river, stream, canal, dam, waterfall, dock, drain, ditch, etc.
+buildings:  amenity column + name - generic buildings or named businesses
+landuse:    landuse column - residential, commercial, industrial, farm, forest, grass, farmland, etc.
+natural:    natural column - peak, beach, forest, bay, cliff, desert, heath, marsh, sand, etc.
+pois:       amenity column + name - restaurant, school, hospital, bank, pharmacy, cafe, etc.
 
 ==================================================
 SYNTAX
@@ -578,10 +700,11 @@ SYNTAX
 - No explanation.
 - No prose.
 - No trailing text.
+- No intercalling of fucntions inside fucntions like func1(func2) not evben tools. Each fucn is a different line.
 
 Only use the functions listed above.
 
-Your primary objective is semantic correctness. Do not blindly choose POI simply because a concept has a POI category. Decide whether the user wants a known/listed place or the physical thing visible in imagery, and use multiple modalities when the query genuinely requires them.
+Your primary objective is semantic correctness. Do not blindly choose POI simply because a concept has a POI category. Decide whether the user wants a known/listed place, a structured OSM category, or the physical thing visible in imagery, and use multiple modalities when the query genuinely requires them.
 """
 
 
@@ -666,7 +789,7 @@ class QueryPlan:
 _FUNC_MAP = {
     "geocode": ("geocode", None, None),
     "demo": ("demo", None, None),
-    "poi": ("poi", None, None),
+    "osm": ("osm", None, None),
     "vision-high": ("vision", "high", None),
     "vision-low": ("vision", "low", None),
     "change-high": ("change", "high", None),
@@ -695,7 +818,7 @@ _NUMBER_RE = re.compile(r'^-?\d+(\.\d+)?$')
 _FUZZ_MAX_ARGS = {
     ("geocode", None): 1,
     ("demo", None): 2,
-    ("poi", None): 2,
+    ("osm", None): 4,
     ("vision", None): 2,
     ("change", None): 5,
     ("change", "high"): 5,
@@ -855,12 +978,59 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         parameters["mode"] = text_args[3]
         inputs = var_args[:1] if var_args else []
 
-    elif operation == "demo" or operation == "poi" or (operation == "vision"):
+    elif operation == "demo" or (operation == "vision"):
         if not text_args:
             raise ValueError(f"{func_name}() needs a string query: {line!r}")
         parameters["target"] = text_args[0]
         parameters["resolution"] = resolution
         inputs = var_args  # zero or one region variable
+
+    elif operation == "osm":
+        # osm(region?, mode, query, method?)
+        # The LLM may write:
+        #   osm("primary", "roads")           -> (query="primary", mode="roads")
+        #   osm("roads", "primary")           -> (query="primary", mode="roads")
+        #   osm(a, "rivers", "waterways")     -> region=a, query="rivers", mode="waterways"
+        #   osm("emergency services", "pois", "semantic") -> query, mode, method
+        #   osm(a, "major roads", "roads", "semantic")    -> region, query, mode, method
+        #
+        # Strategy: detect which text_arg is the mode by matching against
+        # SUPPORTED_MODES. The remaining text args become query and optional method.
+
+        from operations.osm import SUPPORTED_MODES
+
+        if len(text_args) < 1:
+            raise ValueError(f"osm() needs at least a query string: {line!r}")
+
+        # Separate region variable (if any) from text args
+        inputs = var_args[:1] if var_args else []
+
+        # Among text_args, find which one is the mode
+        mode_idx = None
+        for i, arg in enumerate(text_args):
+            if arg.lower() in SUPPORTED_MODES:
+                mode_idx = i
+                break
+
+        if mode_idx is not None:
+            # Found a recognized mode
+            parameters["osm_mode"] = text_args[mode_idx].lower()
+            # Remaining text_args (excluding mode) are query and optional method
+            remaining = [a for i, a in enumerate(text_args) if i != mode_idx]
+            parameters["target"] = remaining[0] if remaining else None
+            parameters["osm_method"] = remaining[1] if len(remaining) > 1 else "keyword"
+        else:
+            # No recognized mode found - use smart detection from osm.py
+            # Assume (query, mode) order, let _resolve_mode_and_query sort it out
+            if len(text_args) >= 2:
+                parameters["target"] = text_args[0]
+                parameters["osm_mode"] = text_args[1]
+                parameters["osm_method"] = text_args[2] if len(text_args) > 2 else "keyword"
+            else:
+                # Only one arg - treat as query, default to roads mode
+                parameters["target"] = text_args[0]
+                parameters["osm_mode"] = "roads"
+                parameters["osm_method"] = "keyword"
 
     elif operation == "tool" and tool_action == "buffer":
         if not var_args:

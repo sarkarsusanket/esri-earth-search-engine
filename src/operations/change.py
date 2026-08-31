@@ -8,16 +8,10 @@ and a mode (new/removed/increased/decreased).
 
 Use from_time="recent", to_time="present" for changes in the past 5 years.
 Use from_time="past", to_time="present" for long-term changes over 10 years.
-
-Internally the operation:
-  1. Loads TurboQuant vision indices for both years at the specified resolution.
-  2. Encodes the query with the shared CLIP text encoder.
-  3. Searches both indices to get (score, lat, lon) tuples.
-  4. Matches points across the two time periods by spatial proximity.
-  5. Filters the matched/unmatched points according to `mode`.
 """
 
 from typing import Optional, Dict, List, Tuple
+from pathlib import Path
 
 import numpy as np
 import geopandas as gpd
@@ -29,27 +23,26 @@ from schema import empty_gdf, from_geometries
 from operations.threshold import compute_threshold
 
 
-def _nearest_match(
-    from_pts: List[Tuple[float, float, float]],
-    to_pts: List[Tuple[float, float, float]],
+def _nearest_match_coords(
+    from_coords: np.ndarray,
+    to_coords: np.ndarray,
     threshold: float,
-) -> Dict[int, int]:
-    """Finds nearest neighbor within threshold using KDTree for O(N log M) performance."""
-    if not from_pts or not to_pts:
-        return {}
-
-    # (score, lat, lon) -> extract [lat, lon] coordinates
-    from_coords = np.array([(p[1], p[2]) for p in from_pts])
-    to_coords = np.array([(p[1], p[2]) for p in to_pts])
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Finds nearest neighbor within threshold using KDTree.
+    
+    Returns array pairs of matching indices (to_indices, from_indices).
+    """
+    if len(from_coords) == 0 or len(to_coords) == 0:
+        return np.empty(0, dtype=int), np.empty(0, dtype=int)
 
     tree = cKDTree(from_coords)
-    dists, indices = tree.query(to_coords, distance_upper_bound=threshold)
+    dists, from_indices = tree.query(to_coords, distance_upper_bound=threshold)
 
-    matches: Dict[int, int] = {}
-    for to_idx, (dist, from_idx) in enumerate(zip(dists, indices)):
-        if dist <= threshold:
-            matches[to_idx] = int(from_idx)
-    return matches
+    valid_mask = dists <= threshold
+    to_indices = np.where(valid_mask)[0]
+    matched_from_indices = from_indices[valid_mask].astype(int)
+
+    return to_indices, matched_from_indices
 
 
 def change(
@@ -63,32 +56,7 @@ def change(
     resolution: str = config.DEFAULT_RESOLUTION,
     nprobe: int = config.VISION_NPROBE_DEFAULT,
 ) -> gpd.GeoDataFrame:
-    """Detect change between *from_time* and *to_time* for *query*.
-
-    Parameters
-    ----------
-    query : str
-        Visual concept to search for (e.g. "new buildings").
-    from_time, to_time : str
-        One of "past", "recent", "present".
-    mode : str
-        One of "new", "removed", "increased", "decreased".
-    region : GeoDataFrame, optional
-        Spatial filter applied to both time periods.
-    vision_encoder : models.VisionEncoder
-        Shared CLIP text encoder.
-    vision_year_indices : dict
-        ``{year: {resolution: TurboQuantSearchIndex}}``.
-    resolution : str
-        Vision resolution ("low" or "high").
-    top_n, nprobe : int
-        Search parameters forwarded to TurboQuant.
-
-    Returns
-    -------
-    GeoDataFrame
-        Points representing changed areas, with ``time`` and ``score`` columns.
-    """
+    """Detect change between *from_time* and *to_time* for *query*."""
     if vision_year_indices is None:
         print("No year-specific vision indices loaded.")
         return empty_gdf()
@@ -106,106 +74,111 @@ def change(
         print(f"No vision index for to_time='{to_time}' (year {to_year}, resolution '{resolution}').")
         return empty_gdf()
 
+    # --- Early index filtering using mode specific search bounds ---
+    # Passing confidence thresholds directly to the search index pre-filters candidates,
+    # drastically reducing the dataset size before k-d tree spatial matching.
+    from_thresh = 0.2 if mode in ("removed", "decreased") else None
+    to_thresh = 0.2 if mode in ("new", "increased") else None
+
     # --- Encode query and search both time periods ---
     query_vector = vision_encoder.encode_text(query)
     query_np = query_vector.squeeze(0).detach().cpu().numpy()
 
     print(f"[{resolution}] Searching {from_time} ({from_year}) index...")
     from_scores, from_lat, from_lon = from_index.search(
-        query_np, region=region, nprobe=nprobe,
+        query_np, region=region, nprobe=nprobe, confidence_thresh=from_thresh
     )
     print(f"[{resolution}] Searching {to_time} ({to_year}) index...")
     to_scores, to_lat, to_lon = to_index.search(
-        query_np, region=region, nprobe=nprobe,
+        query_np, region=region, nprobe=nprobe, confidence_thresh=to_thresh
     )
-
-    # # Adaptive Thresholding
-    # from_mask = compute_threshold(from_scores)
-    # from_scores = from_scores[from_mask == 1]
-    # from_lat = from_lat[from_mask == 1]
-    # from_lon = from_lon[from_mask == 1]
-
-    # to_mask = compute_threshold(to_scores)
-    # to_scores = to_scores[to_mask == 1]
-    # to_lat = to_lat[to_mask == 1]
-    # to_lon = to_lon[to_mask == 1]
 
     if len(from_scores) == 0 and len(to_scores) == 0:
         print("[change] No results in either time period.")
         return empty_gdf()
 
-    # --- Build point lists: (score, lat, lon) ---
-    from_pts = [(float(s), float(la), float(lo)) for s, la, lo in zip(from_scores, from_lat, from_lon)]
-    to_pts   = [(float(s), float(la), float(lo)) for s, la, lo in zip(to_scores, to_lat, to_lon)]
+    # Convert search results directly into contiguous NumPy arrays for zero-copy vectorized operations
+    from_scores = np.asarray(from_scores, dtype=np.float64)
+    from_coords = np.column_stack((from_lat, from_lon))
+
+    to_scores = np.asarray(to_scores, dtype=np.float64)
+    to_coords = np.column_stack((to_lat, to_lon))
+
+    Path("results").mkdir(parents=True, exist_ok=True)
 
     # --- Save raw search points to Shapefiles ---
-    if from_pts:
+    if len(from_scores) > 0:
         gdf_from = gpd.GeoDataFrame(
-            {"score": [p[0] for p in from_pts]},
-            geometry=[Point(p[2], p[1]) for p in from_pts],
-            crs="EPSG:4326"  # Set your coordinate reference system if different
+            {"score": from_scores},
+            geometry=gpd.points_from_xy(from_coords[:, 1], from_coords[:, 0]),
+            crs="EPSG:4326"
         )
         gdf_from.to_file(f"results/from_pts_{from_time}_{from_year}.shp")
 
-    if to_pts:
+    if len(to_scores) > 0:
         gdf_to = gpd.GeoDataFrame(
-            {"score": [p[0] for p in to_pts]},
-            geometry=[Point(p[2], p[1]) for p in to_pts],
+            {"score": to_scores},
+            geometry=gpd.points_from_xy(to_coords[:, 1], to_coords[:, 0]),
             crs="EPSG:4326"
         )
         gdf_to.to_file(f"results/to_pts_{to_time}_{to_year}.shp")
 
     # --- Match points across time periods ---
-    matches = _nearest_match(from_pts, to_pts, config.CHANGE_DISTANCE_THRESHOLD)
+    to_idx, from_idx = _nearest_match_coords(from_coords, to_coords, config.CHANGE_DISTANCE_THRESHOLD)
 
-    to_matched = set(matches.keys())
-    from_matched = set(matches.values())
-
-    gdf_to = gpd.GeoDataFrame(
-        {"to_score": [to_pts[p][0] for p in to_matched], "from_score": [from_pts[p][0] for p in from_matched], "minus_score": [to_pts[a][0]-from_pts[b][0] for a, b in matches.items()]},
-        geometry=[Point(to_pts[p][2], to_pts[p][1]) for p in to_matched],
-        crs="EPSG:4326"
-    )
-    gdf_to.to_file(f"results/to_matchged_{to_time}_{to_year}.shp")
-
-    # --- Collect results according to mode ---
-    result_points: List[Point] = []
-    result_scores: List[float] = []
-    result_times: List[str] = []
-
-    if mode == "new":
-        for ti, fi in matches.items():
-                if to_pts[ti][0] - from_pts[fi][0] > 0.15 and to_pts[ti][0] > 0.2:
-                    result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
-                    result_scores.append(to_pts[ti][0] - from_pts[fi][0])
-                    result_times.append(to_time)
-
-    elif mode == "removed":
-        for ti, fi in matches.items():
-                if from_pts[fi][0] - to_pts[ti][0] > 0.15 and from_pts[fi][0] > 0.2:
-                    result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
-                    result_scores.append(to_pts[ti][0] - from_pts[fi][0])
-                    result_times.append(to_time)
-
-    elif mode == "increased":
-        for ti, fi in matches.items():
-            if to_pts[ti][0] > from_pts[fi][0]:
-                result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
-                result_scores.append(to_pts[ti][0] - from_pts[fi][0])
-                result_times.append(f"{from_time}->{to_time}")
-
-    elif mode == "decreased":
-        for ti, fi in matches.items():
-            if to_pts[ti][0] < from_pts[fi][0]:
-                result_points.append(Point(to_pts[ti][2], to_pts[ti][1]))
-                result_scores.append(from_pts[fi][0] - to_pts[ti][0])
-                result_times.append(f"{from_time}->{to_time}")
-
-    if not result_points:
+    if len(to_idx) == 0:
         print(f"[{resolution}] No '{mode}' changes detected.")
         return empty_gdf()
 
-    gdf = from_geometries(result_points, scores=result_scores)
-    gdf["time"] = result_times
+    m_to_scores = to_scores[to_idx]
+    m_from_scores = from_scores[from_idx]
+    minus_scores = m_to_scores - m_from_scores
+
+    gdf_matched = gpd.GeoDataFrame(
+        {
+            "to_score": m_to_scores,
+            "from_score": m_from_scores,
+            "minus_score": minus_scores
+        },
+        geometry=gpd.points_from_xy(to_coords[to_idx, 1], to_coords[to_idx, 0]),
+        crs="EPSG:4326"
+    )
+    gdf_matched.to_file(f"results/to_matchged_{to_time}_{to_year}.shp")
+
+    # --- Vectorized Mode Filtering ---
+    if mode == "new":
+        mask = (m_from_scores < 0.18) & (m_to_scores > 0.2)
+        res_scores = minus_scores[mask]
+        res_time = to_time
+    elif mode == "removed":
+        mask = (m_from_scores > 0.2) & (m_to_scores < 0.18)
+        res_scores = minus_scores[mask]
+        res_time = to_time
+    elif mode == "increased":
+        mask = m_to_scores > m_from_scores
+        res_scores = minus_scores[mask]
+        res_time = f"{from_time}->{to_time}"
+    elif mode == "decreased":
+        mask = m_to_scores < m_from_scores
+        res_scores = m_from_scores[mask] - m_to_scores[mask]
+        res_time = f"{from_time}->{to_time}"
+    else:
+        mask = np.zeros(len(to_idx), dtype=bool)
+        res_scores = np.empty(0)
+        res_time = ""
+
+    if not np.any(mask):
+        print(f"[{resolution}] No '{mode}' changes detected.")
+        return empty_gdf()
+
+    matched_to_idx = to_idx[mask]
+    matched_lons = to_coords[matched_to_idx, 1]
+    matched_lats = to_coords[matched_to_idx, 0]
+
+    # Batch create Shapely Point objects via high-speed vectorized constructor
+    result_points = gpd.points_from_xy(matched_lons, matched_lats)
+
+    gdf = from_geometries(list(result_points), scores=res_scores.tolist())
+    gdf["time"] = res_time
     print(f"[{resolution}] {mode}: {len(gdf)} change(s) detected.")
     return gdf

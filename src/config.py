@@ -91,10 +91,24 @@ CLIP_VISION_MODEL_NAME = "ViT-H-14"
 CLIP_VISION_PRETRAINED = "laion2b_s32b_b79k"
 
 # ------------------------------------------------------------------
-# POI assets
+# OSM assets
 # ------------------------------------------------------------------
-POI_EMBEDDING_PATH = os.path.join(EMBEDDINGS_DIR, "poi_embeddings.parquet")
-POI_PATH = os.path.join(EMBEDDINGS_DIR, "poi.parquet")
+OSM_EMBEDDING_DIR = rf"E:\Data\query-earth\embeddings\osm"
+OSM_YEARS = ["2014", "2020", "latest"]
+OSM_DEFAULT_YEAR = "2014"
+OSM_CATEGORY_FILES = [
+    'buildings.parquet',
+    'landuse.parquet',
+    'natural.parquet',
+    'pois.parquet',
+    'roads.parquet',
+    'waterway.parquet',
+]
+
+# Directory containing per-category embeddings for OSM semantic search.
+# Expected structure: {OSM_CATEGORY_EMBED_DIR}/{mode}.parquet with columns
+# 'category' and 'embedding' (384-dim vectors from all-MiniLM-L6-v2).
+OSM_CATEGORY_EMBED_DIR = rf"E:\Data\query-earth\embeddings\osm\category-embeddings"
 
 # ------------------------------------------------------------------
 # Local query router (llama.cpp GGUF model, replaces the previous Ollama

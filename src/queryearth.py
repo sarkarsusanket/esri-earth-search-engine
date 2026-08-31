@@ -31,6 +31,7 @@ from executor import PipelineContext, PipelineExecutor
 from turboquant_index import TurboQuantSearchIndex
 from schema import GEOMETRY_COL, SCORE_COL
 from operations.grounding import SpatialGrounder
+from operations.osm import load_osm_data, load_osm_category_embeddings
 
 
 # ------------------------------------------------------------------
@@ -48,8 +49,6 @@ class QueryEarth:
     def initialize(self, **kwargs):
         demo_gdf, ae_embeddings, demo_model, text_embedder = models.load_demographic_assets()
         vision_encoder = models.VisionEncoder()
-
-        poi_gdf, poi_embedding_df = models.load_poi_assets()
 
         grounder = SpatialGrounder()
 
@@ -69,10 +68,18 @@ class QueryEarth:
                 else:
                     print(f"No vision index for year {year}, resolution '{resolution}' at {folder} (skipping).")
 
+        # Load OSM data for the default year
+        osm_data = load_osm_data(config.OSM_EMBEDDING_DIR, config.OSM_DEFAULT_YEAR)
+
+        # Load OSM category embeddings for semantic search
+        osm_category_embeddings = load_osm_category_embeddings(config.OSM_CATEGORY_EMBED_DIR)
+
         self.context = PipelineContext(
             demo_gdf, ae_embeddings, demo_model, text_embedder,
-            vision_encoder, vision_indices, poi_gdf, poi_embedding_df, grounder,
-            vision_year_indices=vision_year_indices
+            vision_encoder, vision_indices, grounder,
+            vision_year_indices=vision_year_indices,
+            osm_data=osm_data,
+            osm_category_embeddings=osm_category_embeddings,
         )
         self.executor = PipelineExecutor(self.context)
 
@@ -100,7 +107,7 @@ class QueryEarth:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="QueryEarth DLPK smoke test")
+    parser = argparse.ArgumentParser(description="ESRI Earth Search Engine")
     parser.add_argument("-query", type=str, required=True, help="The query to search for")
     args = parser.parse_args()
 

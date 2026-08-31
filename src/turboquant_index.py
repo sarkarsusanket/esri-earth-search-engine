@@ -129,6 +129,7 @@ class TurboQuantSearchIndex:
         self,
         query_vec: np.ndarray,
         top_k: Optional[int] = None,
+        confidence_thresh: Optional[float] = None,
         region: Optional[gpd.GeoDataFrame] = None,
         nprobe: int = 24,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -160,9 +161,15 @@ class TurboQuantSearchIndex:
             raw_scores = np.concatenate(score_parts)
             rows_pool = np.concatenate(row_parts)
 
-        if top_k: k = min(top_k, len(raw_scores))
-        else: k = len(raw_scores)
-        top_idx = np.argpartition(-raw_scores, k - 1)[:k]
+        if top_k: 
+            k = min(top_k, len(raw_scores))
+            top_idx = np.argpartition(-raw_scores, k - 1)[:k]
+        elif confidence_thresh: 
+            top_idx = np.where(raw_scores >= confidence_thresh)[0]
+        else: 
+            k = len(raw_scores)
+            top_idx = np.argpartition(-raw_scores, k - 1)[:k]
+        
         top_idx = top_idx[np.argsort(-raw_scores[top_idx])]  # best-first
         chosen_rows = rows_pool[top_idx]
 
