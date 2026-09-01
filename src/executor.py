@@ -12,6 +12,7 @@ from typing import Dict
 
 import geopandas as gpd
 
+import config
 from query_parser import QueryPlan, PipelineStep
 from operations import geocode as geocode_op
 from operations import demo as demo_op
@@ -78,12 +79,19 @@ class PipelineExecutor:
         elif step.operation == "vision":
             region = self._single_input(step)
             resolution = params.get("resolution")
+            time_period = params.get("time")
+            # Resolve year-specific index if time is specified, else use default
+            if time_period and time_period in config.VISION_YEARS:
+                year = config.VISION_YEARS[time_period]
+                turbo_index = self.context.vision_year_indices.get(year, {}).get(resolution)
+            else:
+                turbo_index = self.context.vision_indices.get(resolution)
             result = vision_op.search_vision(
                 target=params.get("target"),
                 region=region,
                 vision_encoder=self.context.vision_encoder,
                 vision_grounder=self.context.grounder,
-                turbo_index=self.context.vision_indices.get(resolution),
+                turbo_index=turbo_index,
                 resolution=resolution,
             )
 
@@ -94,9 +102,6 @@ class PipelineExecutor:
                 query=params.get("target"),
                 region=region,
                 osm_data=self.context.osm_data,
-                method=params.get("osm_method", "keyword"),
-                text_embedder=self.context.text_embedder,
-                category_embeddings=self.context.osm_category_embeddings,
             )
 
         elif step.operation == "change":
@@ -120,6 +125,9 @@ class PipelineExecutor:
             raise ValueError(
                 f"Unknown operation '{step.operation}' in step {step.step_id}."
             )
+
+        if result is not None and not result.empty and len(result) > config.MAX_RESULTS:
+            result = result.head(config.MAX_RESULTS).copy()
 
         self.variables[step.output_variable] = result
         return result

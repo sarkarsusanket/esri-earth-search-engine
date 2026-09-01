@@ -19,7 +19,7 @@ Problem 5:
 - need to understand that sometimes osm returns a point or line, and you cannot poass that as a region. you need to buffer that.
 
 Problem 6:
-- Need to put a cap on the max outputs to 1k
+- Need to put a cap on the max outputs to 500
 
 Problem 7:
 -Reverse change detect not working: "find me buildings that have disappeared since 2020 in bakersfield"

@@ -143,7 +143,8 @@ def change(
         geometry=gpd.points_from_xy(to_coords[to_idx, 1], to_coords[to_idx, 0]),
         crs="EPSG:4326"
     )
-    gdf_matched.to_file(f"results/to_matchged_{to_time}_{to_year}.shp")
+    print(gdf_matched)
+    gdf_matched.to_file(rf"D:\Code\query-earth\results\to_matched_{to_time}_{to_year}.shp")
 
     # --- Vectorized Mode Filtering ---
     if mode == "new":
@@ -155,11 +156,11 @@ def change(
         res_scores = minus_scores[mask]
         res_time = to_time
     elif mode == "increased":
-        mask = m_to_scores > m_from_scores
+        mask = (m_to_scores > m_from_scores) & ((m_to_scores - m_from_scores)>0.01) & (m_to_scores > 0.2)
         res_scores = minus_scores[mask]
         res_time = f"{from_time}->{to_time}"
     elif mode == "decreased":
-        mask = m_to_scores < m_from_scores
+        mask = (m_to_scores < m_from_scores) & ((m_from_scores - m_to_scores)>0.01) & (m_from_scores > 0.2)
         res_scores = m_from_scores[mask] - m_to_scores[mask]
         res_time = f"{from_time}->{to_time}"
     else:

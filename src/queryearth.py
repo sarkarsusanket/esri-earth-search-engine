@@ -31,7 +31,7 @@ from executor import PipelineContext, PipelineExecutor
 from turboquant_index import TurboQuantSearchIndex
 from schema import GEOMETRY_COL, SCORE_COL
 from operations.grounding import SpatialGrounder
-from operations.osm import load_osm_data, load_osm_category_embeddings
+from operations.osm import load_osm_data
 
 
 # ------------------------------------------------------------------
@@ -71,15 +71,11 @@ class QueryEarth:
         # Load OSM data for the default year
         osm_data = load_osm_data(config.OSM_EMBEDDING_DIR, config.OSM_DEFAULT_YEAR)
 
-        # Load OSM category embeddings for semantic search
-        osm_category_embeddings = load_osm_category_embeddings(config.OSM_CATEGORY_EMBED_DIR)
-
         self.context = PipelineContext(
             demo_gdf, ae_embeddings, demo_model, text_embedder,
             vision_encoder, vision_indices, grounder,
             vision_year_indices=vision_year_indices,
             osm_data=osm_data,
-            osm_category_embeddings=osm_category_embeddings,
         )
         self.executor = PipelineExecutor(self.context)
 

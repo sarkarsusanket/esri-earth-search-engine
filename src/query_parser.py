@@ -89,49 +89,49 @@ Do NOT use demo merely because a word such as "people", "income", "age", or "pop
 
 --------------------------------------------------
 
-3. osm(region?, mode, query, method?)
+3. osm(region?, mode, query)
 
 OpenStreetMap search over structured geographic data. The mode determines which dataset to search, and the query filters by category or name.
 
+The query supports comma-separated values for multi-term search. For example, osm("primary, secondary, tertiary", "roads") will search for all three road types at once and return the union of matches.
+
 Available modes and what they contain:
-- "roads":      highway types (primary, secondary, motorway, residential, footway, cycleway, etc.)
-                Category column: highway
-- "waterways":  waterway types (river, stream, canal, dam, waterfall, etc.)
-                Category column: waterway
+- "roads":      road types (primary, secondary, motorway, residential, footway, cycleway, etc.)[the "primary", "secondary" and "tertiary" are types of highways]
+                The options available: ['service', 'motorway', 'residential', 'track', 'tertiary', 'primary', 'primary_link', 'secondary', 'motorway_link', 'unclassified', 'busway', 'trunk', 'secondary_link', 'steps', 'footway', 'cycleway', 'trunk_link', 'path', 'living_street', 'pedestrian', 'tertiary_link', 'bridleway', 'road', 'residential_link', 'minor', 'turning_loop', 'corridor', 'elevator', 'emergency_bay', 'bus_stop', 'service;path', 'escape', 'disused', 'bus_guideway', 'via_ferrata', 'crossing', 'traffic_island', 'passing_place', 'scramble', 'footpath', 'ladder', 'turning_circle', 'footway:abandoned']
+
+- "waterways":  waterway types 
+                Options: ['confluence', 'weir', 'floodgate', 'waterfall', 'sanitary_dump_station', 'dam', 'lock_gate', 'fuel', 'rapids', 'dock', 'pumping_station', 'stream_end', 'ditch', 'switch', 'surge_tank', 'flow_control', 'access_point', 'bend', 'sluice_gate', 'bay', 'yes', 'water_point', 'drain', 'turning_point', 'boat_lift', 'cascade', 'stream', 'fairway', 'boatyard', 'valve', 'tidal_channel', 'flume', 'flowline', 'debris_screen', 'canal', 'pressurised', 'river', 'check_dam', 'artificial', 'duct', 'wadi', 'floating_barrier', 'fish_pass', 'wash', 'derelict_canal', 'construction', 'link', 'drystream', 
+                'pressurized', 'fish_screen', 'spillway', 'vadi']
+
 - "buildings":  building footprints with optional amenity type and name
-                Category column: amenity (mostly empty for generic buildings)
-- "landuse":    land-use classifications (residential, commercial, industrial, forest, farmland, etc.)
-                Category column: landuse
-- "natural":    natural features (peak, beach, forest, bay, cliff, desert, etc.)
-                Category column: natural
+                Categories: ['parking', 'library', 'toilets', 'pharmacy', 'bank', 'social_facility', 'police', 'grave_yard', 'place_of_worship', 'arts_centre', 'theatre', 'fast_food', 'community_centre', 'flight_school', 'clock', 'clinic', 'conference_centre', 'fuel', 'post_office', 'post_depot', 'social_centre', 'restaurant', 'courthouse', 'events_venue', 'fire_station', 'car_rental', 'doctors', 'casino', 'school', 'townhall', 'university', 'ranger_station', 'cinema', 'recycling', 'dentist', 'studio', 'mortuary', 'waste_transfer_station', 'car_wash', 'marketplace', 'cafe', 'childcare', 'commercial', 'nursing_home', 
+                'nightclub', 'fixme', 'motel', 'planetarium', 'research_institute', 'bar', 'pub', 'events_centre', 'ice_cream', 'dojo', 'amphitheatre', 'prison', 'mountain_rescue', 'money_transfer', 'veterinary', 'language_school', 'bicycle_rental', 'daycare', 'food_court', 'stripclub', 'love_hotel', 'dressing_room', 'locker', 'vehicle_inspection', 'hospital', 'concert_hall', 'bench', 'public_building', 'exhibition_centre', 'animal_shelter', 'college', 'shelter', 'kindergarten', 'music_school', 'training', 'music_venue', 'senior_center', 'spa', 'fuel;car_wash', 'art_school', 'fraternity', 'mausoleum', 'dancing_school', 'prep_school', 'cold_storage', 'public_facility', 'security_booth', 'bus_station', 'animal_boarding', 'social_club', 'art_gallery', 'bureau_de_change', 'canteen', 
+                'urgent_care', 'storage', 'ski_school', 'stroller_parking', 'bicycle_parking', 'clubhouse', 'ferry_terminal', 'assisted_living;skilled_nursing_facility', 'boat_storage', 'boat_rental', 'shower', 'first_aid', 'sign', 'parcel_locker', 'food', 'fountain', 'crematorium', 'water_slide', 'social_club;events_venue', 'mailroom', 'coworking_space', 'snack_stand', 'public', 'atm', 'amphitheater', 'laundry', 'museum', 'office', 'payment_terminal', 'waste_disposal', 'snack_cart', 'stage', 'bank;fire_station;fast_food', 'motorcycle_rental', 'water tank', 'monastery', 'doctors;school', 'biergarten', 'music_rehearsal_place', 
+                'mortuary;crematory', 'swingerclub', 'dive_centre', 'trade_school', 'sperm_bank', 'stable', 'meditation_centre', 'railway', 'vending_machine', 'karaoke_box', 'cruise_terminal', 'tattoo', 'framing', 'reception_desk', 'healthcare', 'antiques', 'public_bath', 'boat_sharing', 'open_air_stage', 'vacant', 'gambling', 'Casitas Del Sol', 'health_club', 'charging_station', 'kindergarden', 'security_control', 'information', 'laundry_room;mail_box;gym', 'wedding_chapel', 'orthodontist', 'parking_entrance', 'palmist', 'ski_rental', 'check_cashing', 'bbq', 'surface', 'event', 'towing', 'dispatch_center', 'coffee', 'ticket_booth', 'animal_training', 'convention_centre', 'apartment', 'event_hall', 'crypt', 'funeral_hall', 'field_shelter', 'sun_shelter', 'main theater', 
+                'practice rooms', 'driving_school', 'social_facility;nursing_home', 'vacuum_cleaner', 'animal_breeding', 'yes', 'parking_space', 'smoking_area', 'post_box', 'undertaker', 'crematory_services', 'senior housing', 'disused', 'payment_centre', 'letter_box', 'place_of_mourning', 'meditation_center', 'restaurant;cafe', 'hookah_lounge', 'gas', 'fast_food;bicycle_rental', 'public_bookcase', 'workshop', 'concession_stand', 'kitchen', 'reception_point', 'checkpoint', 'retirement_home', 'Insurance Brokerage', 'tutoring_centre', 'brothel', 'Aviation Laboratory', 'pizza_oven', 'taxi', 'psychic', 'polling_station', 'surf_school', 
+                'bus_stop;bus_station', 'Vacation Rental', 'sanitary_dump_station', 'warehouse', 'shelter;fuel', 'telephone', 'food_court;restaurant', 'gazebo', 'cabana', 'registration', 'reception', 'egg-laying', 'event_center', 'place_of_worship;monastery', 'tool_library', 'school;place_of_worship', 'cafe;fuel']
+
+- "landuse":    land-use classifications
+                the available classes to search from: ['industrial', 'construction', 'railway', 'farmland', 'orchard', 'commercial', 'retail', 'residential', 'quarry', 'cemetery', 'recreation_ground', 'greenfield', 'basin', 'grass', 'allotments', 'reservoir', 'demolished:recreation_ground', 'brownfield', 'farmyard', 'institutional', 'forest', 'farm', 'landfill', 'religious', 'military', 'education', 'village_green', 'meadow', 'vineyard', 'salt_pond', 'fairground', 'residential;monument;historic_site', 'ranch', 'plant_nursery', 'foreign_trade_zone', 'greenhouse_horticulture', 'public', 'utility', 'government', 'telescope', 
+                'special_use', 'public_facility', 'prisons', 'civic_admin', 'railway;commercial', 'winter_sports', 'recreation_ground;landuse=fairground', 'nature reserve', 'traffic_island', 'nature_reserve', 'observatory', 'garages', 'civil', 'commercial;retail', 'aquaculture', 'animal_keeping', 'corral', 'nursery', 'shrubland', 'salt_desert', 'municipial', 'depot', 'civic', 'weigh_station', 'flowerbed', 'logistics', 'temp', 'transportation', 'ruins', 'wasteland', 'dirt', 'greenery', 'oilfield', 'oil_field', 'public_building', 'water_storage', 'storage', 'quad', 'conservation', 'vacant', 'gravel', 'pasture', 'desert', 
+                'community_food_growing', 'apiary', 'yes', 'nature', 'moving_building', 'disused:industrial', 'Maintenance Area', 'civic_services', 'judicial', 'community garden', 'open_space', 'civic_safety', 'training_area', 'harbour', 'airfield', 'highway', 'transport', 'garden', 'park', 'proposed', 'cerro', 'civic_service', 'Storm Drain overflow basin', 'sand', 'turf', 'recreation', 'homeless camp', 'unknown', 'paddleboat', 'public facility', 'radio', 'eduation', 'Luch Tables', 'unpatented_mining_claim', 'paved', 'school', 'mixed', 'private', 'parking', 'shrubs', 'tourism', 'wholesale', 'healthcare', 'putting green', 
+                'rail', 'special use', 'easement', 'mine', 'tree_pit', 'scrub', 'lodging', 'orchard;vineyard', 'governmental', 'public_works', 'sign', 'rangeland', 'commercial;residential', 'facility']
+
+- "natural":    natural features 
+                Categories: ['saddle', 'volcano', 'cave_entrance', 'stone', 'peak', 'tree', 'spring', 'cliff', 'rock', 'hot_spring', 'cape', 'wood', 'bay', 'arch', 'rock_formation', 'beach', 'water', 'crater', 'geyser', 'sinkhole', 'hill', 'slope', 'heath', 'wetland', 'desert', 'plateau', 'tree_stump', 'grassland', 'valley', 'point', 'scrub', 'scree', 'canyon', 'ridge', 'dune', 'yes', 'bush', 'ravine', 'grove', 'mountain_range', 'shrub', 'flat', 'wildflowers', 'succulent_plant', 'cactus', 'flowering_plant', 'bare_rock', 'geothermal_area', 'cirque', 'plant', 'landform', 'birds_nest', 'peninsula', 'mesa', 'grass', 'butte', 
+                'basin', 'stump', 'sediment', 'hills', 'plain', 'depression', 'cave', 'caldera', 'fumarole', 'agave', 'coastline', 'shingle', 'reef', 'sand', 'mud', 'fell', 'shrubbery', 'wadi', 'dry wash', 'strait', 'glacier', 'knoll', 'gully', 'gorge', 'dry_wash', 'shoal', 'tree_row', 'mountain_basin', 'lava', 'fault', 'range', 'landslide', 'shrubland', 'arete', 'meadow', 'tree_group', 'land', 'boulder', 'dry_lake', 'ground', 'soil', 'earth_bank', 'greenery', 'lake', 'dirt', 'floodplain', 'anthill', 'trees', 'forest', 'blowout', 'desert_pavement', 'massif', 'marsh', 'gulch', 'shoreline', 'fissure', 'rocks', 'transform_fault', 'feature', 'playa', 'water;wetland']
+
 - "pois":       points of interest with amenity type and name
-                Category column: amenity (restaurant, school, hospital, bank, etc.)
-
-Method parameter (optional, default="keyword"):
-- "keyword":   Direct category/name matching (fast, exact matches)
-- "semantic":  Embedding-based similarity search (flexible, fuzzy matching)
-
-When method="keyword" is used but no matches are found, the search
-automatically falls back to semantic search if embeddings are available.
+                Category examples: (restaurant, school, hospital, bank, etc.) You could search and find out ig.
 
 Examples:
 - osm("primary", "roads") - find primary highways (keyword match)
+- osm("primary, secondary, tertiary", "roads") - find all three road types at once
 - osm("rivers", "waterways") - find rivers (keyword match)
 - osm("hospitals", "pois") - find hospitals (keyword match)
 - osm("residential", "landuse") - find residential land use (keyword match)
 - osm("forest", "natural") - find natural forests (keyword match)
 - osm(a, "restaurants", "buildings") - find restaurant buildings in region a
-- osm("emergency services", "pois", "semantic") - find emergency services via semantic matching
-- osm(a, "major roads", "roads", "semantic") - find major roads via semantic matching
-
-Use method="keyword" when:
-- The query is a direct category name (e.g. "primary", "river", "hospital")
-- You want exact, fast matches
-
-Use method="semantic" when:
-- The query is a concept or phrase (e.g. "emergency services", "major roads")
-- You want fuzzy/flexible matching against category names
-- Direct keyword matching might miss relevant results
 
 Use OSM when the query is about:
 - Specific road/highway types (primary, motorway, footway, etc.)
@@ -151,9 +151,12 @@ Do NOT use OSM for:
 
 --------------------------------------------------
 
-5. vision-low(region?, query)
+5. vision-low(region?, query, time?)
 
 Visual search over LARGE physical objects, structures, and land-use patterns that can be reliably identified from lower-resolution aerial/satellite imagery.
+
+Arguments:
+- time (optional): one of "past" (2014), "recent" (2020), "present" (2026). Defaults to "present" if not specified.
 
 Examples:
 - golf courses
@@ -176,11 +179,16 @@ Think:
 
 Use vision-low when the user's intent is primarily about the physical appearance, footprint, land use, or spatial extent of something.
 
+Use the time parameter only when the user explicitly asks about a specific time period (e.g. "what did this area look like in 2014", "recent imagery", "past land use").
+
 --------------------------------------------------
 
-6. vision-high(region?, query)
+6. vision-high(region?, query, time?)
 
 Visual search over SMALLER, FINE-GRAINED, or visually detailed objects that require high-resolution imagery.
+
+Arguments:
+- time (optional): one of "past" (2014), "recent" (2020), "present" (2026). Defaults to "present" if not specified.
 
 Examples:
 - swimming pools
@@ -197,6 +205,8 @@ Think:
 "What small or fine-grained physical object would I need high-resolution imagery to see?"
 
 Use vision-high when the requested object is too small or visually detailed for vision-low.
+
+Use the time parameter only when the user explicitly asks about a specific time period (e.g. "swimming pools in 2020", "recent solar panels", "past construction").
 
 --------------------------------------------------
 
@@ -294,7 +304,7 @@ VISION provides VISUAL appearance from satellite/aerial imagery:
 
 ROUTING RULES:
 - "primary highways" -> osm("primary", "roads") [structured road data]
-- "highways" -> you need to get teh union of osm("primary", "roads") / osm("secondary", "roads") and osm("tertiary", "roads")
+- "highways" -> osm("primary, secondary, tertiary", "roads") [all major highway types in one call]
 - "rivers" -> osm("rivers", "waterways") [structured waterway data]
 - "residential areas" -> osm("residential", "landuse") [structured landuse data]
 - "forests" -> osm("forest", "natural") [structured natural feature data]
@@ -431,6 +441,10 @@ IMPORTANT INTENT RULES
 
 Words such as "field", "pool", "parking lot", "airport", "hospital", "school", etc. MUST NOT automatically determine the modality. Interpret the complete request.
 
+Be mindful of what you are asking each fucntion, remember the vision search is just a simple vlm model. So lets say in a query if you search for "new buildings" 
+because the users query had "new buildings in it, the the vlm will give more similarity to the patches which are havoing new under construcion buildings, and that 
+might give wrong results. So the best thing is to give search for buildings, and compare two years.
+
 ==================================================
 DIFFICULT EXAMPLES
 ==================================================
@@ -510,50 +524,23 @@ Hospitals are OSM POI data; elderly residents is demographic.
 --------------------------------------------------
 
 Query:
-"Find swimming pools in wealthy neighborhoods"
-
-Plan:
-a = demo("wealthy neighborhoods")
-output = vision-high(a, "swimming pools")
-
-Reason:
-Swimming pools are visual objects detected in imagery.
-
---------------------------------------------------
-
-Query:
-"Find large parking lots near airports"
-
-Plan:
-a = osm("airports", "pois")
-output = vision-low(a, "large parking lots")
-
-Reason:
-Airports are OSM POI data; large parking lots are visual objects.
-
---------------------------------------------------
-
-Query:
-"Find restaurants near large parking lots"
-
-Plan:
-a = vision-low("large parking lots")
-output = osm(a, "restaurants", "pois")
-
-Reason:
-Large parking lots are visual; restaurants are OSM POI data.
-
---------------------------------------------------
-
-Query:
-"Find red buildings in Los Angeles"
+"Find me places which used to be foests but now have buildings or residetials in LA."
 
 Plan:
 a = geocode("Los Angeles")
-output = vision-high(a, "red buildings")
+b = vision-high(a, "forests", "past")
+c = buffer(b, 0.2)
+d = vision-high(a, "buildings", "present")
+e = buffer(d, 0.2)
+output = intersection(b, d)
 
 Reason:
-"Red" is a visual property (color) that can only be detected in imagery.
+We didn't go the change detection path here because change detection will only allow us to detect changes of 
+a particular entity. But here the user wanted the difference of places, the places which went from forest to 
+buildings. So we utilize the year functionality of Vision High to first search the forests in past years and 
+buildings in present years and notice how we do a buffer of 0.2 because 200 meter is the resolution of the 
+Vision High imagery, and then we find out the intersection between the two C and E. There will be user queries 
+which will be complicated and which needs some thoughts like this.
 
 --------------------------------------------------
 
@@ -561,21 +548,21 @@ Query:
 "Find areas where new buildings appeared recently"
 
 Plan:
-a = change-high("new buildings", "recent", "present", "new")
+a = change-high("buildings", "recent", "present", "new")
 output = a
 
 Reason:
-This is a change-detection query.
+This is a change-detection query. Also be mindful, just bescause the user asks for new buildings doesnt men you havr yo pass new buildings to the change (vision) search. The viison search is a vlm, and if you search for "new builidngs" as opposed to "buildings" you might get wrong answers.
 
 Query:
 "Find new construction in Los Angeles since 2014"
 
 Plan:
 a = geocode("Los Angeles")
-output = change-low(a, "new construction", "past", "present", "new")
+output = change-low(a, "construction", "past", "present", "new")
 
 Reason:
-The query asks about what was built (new construction) since 2014 (past) to now (present).
+The query asks about what was built (new construction) since 2014 (past) to now (present). Again be ware or what you are asking the viison searh.
 
 Query:
 "Find potential locations that are near high-density elderly populations, accessible by major roads and transit, outside flood-prone areas, and within 5km of a hospital and fire station."
@@ -643,11 +630,11 @@ geocode(place)
 
 demo(region?, query)
 
-osm(region?, mode, query, method?)
+osm(region?, mode, query)
 
-vision-high(region?, query)
+vision-high(region?, query, time?)
 
-vision-low(region?, query)
+vision-low(region?, query, time?)
 
 change-low(region?, query, from_time, to_time, mode)
 
@@ -819,7 +806,7 @@ _FUZZ_MAX_ARGS = {
     ("geocode", None): 1,
     ("demo", None): 2,
     ("osm", None): 4,
-    ("vision", None): 2,
+    ("vision", None): 3,
     ("change", None): 5,
     ("change", "high"): 5,
     ("change", "low"): 5,
@@ -978,24 +965,33 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         parameters["mode"] = text_args[3]
         inputs = var_args[:1] if var_args else []
 
-    elif operation == "demo" or (operation == "vision"):
+    elif operation == "demo":
+        if not text_args:
+            raise ValueError(f"{func_name}() needs a string query: {line!r}")
+        parameters["target"] = text_args[0]
+        inputs = var_args  # zero or one region variable
+
+    elif operation == "vision":
         if not text_args:
             raise ValueError(f"{func_name}() needs a string query: {line!r}")
         parameters["target"] = text_args[0]
         parameters["resolution"] = resolution
+        # Optional time parameter (last text arg if it's a known time period)
+        if len(text_args) >= 2:
+            candidate = text_args[-1].lower()
+            if candidate in SUPPORTED_TIME_PERIODS:
+                parameters["time"] = candidate
         inputs = var_args  # zero or one region variable
 
     elif operation == "osm":
-        # osm(region?, mode, query, method?)
+        # osm(region?, mode, query)
         # The LLM may write:
         #   osm("primary", "roads")           -> (query="primary", mode="roads")
         #   osm("roads", "primary")           -> (query="primary", mode="roads")
         #   osm(a, "rivers", "waterways")     -> region=a, query="rivers", mode="waterways"
-        #   osm("emergency services", "pois", "semantic") -> query, mode, method
-        #   osm(a, "major roads", "roads", "semantic")    -> region, query, mode, method
         #
         # Strategy: detect which text_arg is the mode by matching against
-        # SUPPORTED_MODES. The remaining text args become query and optional method.
+        # SUPPORTED_MODES. The remaining text args become query.
 
         from operations.osm import SUPPORTED_MODES
 

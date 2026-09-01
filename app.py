@@ -54,16 +54,18 @@ def api_predict(req: QueryRequest):
     try:
         # Run inference using your local model
         gdf = qe.find(req.query)
+        print(gdf)
         
         # Calculate representative point (longitude/latitude) for mapping
-        if not gdf.empty:
-            centroids = gdf.geometry.centroid
-            gdf["_lon"] = centroids.x
-            gdf["_lat"] = centroids.y
+        # if not gdf.empty:
+        #     centroids = gdf.geometry.centroid
+        #     gdf["_lon"] = centroids.x
+        #     gdf["_lat"] = centroids.y
         
         geojson_data = json.loads(gdf.to_json())
         return geojson_data
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=500, detail=str(e))
 
 import uvicorn

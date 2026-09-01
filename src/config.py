@@ -94,8 +94,8 @@ CLIP_VISION_PRETRAINED = "laion2b_s32b_b79k"
 # OSM assets
 # ------------------------------------------------------------------
 OSM_EMBEDDING_DIR = rf"E:\Data\query-earth\embeddings\osm"
-OSM_YEARS = ["2014", "2020", "latest"]
-OSM_DEFAULT_YEAR = "2014"
+OSM_YEARS = ["2014", "2026"]
+OSM_DEFAULT_YEAR = "2026"
 OSM_CATEGORY_FILES = [
     'buildings.parquet',
     'landuse.parquet',
@@ -122,3 +122,4 @@ ROUTER_N_THREADS = max(1, (os.cpu_count() or 4) - 1)
 # Search defaults
 # ------------------------------------------------------------------
 VISION_NPROBE_DEFAULT = 24  # IVF clusters probed per global (non-spatially-filtered) vision search
+MAX_RESULTS = 500  # Maximum features any single step can return
