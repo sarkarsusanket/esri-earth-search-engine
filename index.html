@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+<title>Esri | Earth Search Engine</title>
+
+<!-- Calcite Design System -->
+<link rel="stylesheet" href="https://js.arcgis.com/calcite-components/3.1.1/calcite.css" />
+<script type="module" src="https://js.arcgis.com/calcite-components/3.1.1/calcite.esm.js"></script>
+
+<!-- ArcGIS Maps SDK for JavaScript — Map components -->
+<script type="module" blocking="render" src="https://js.arcgis.com/5.1"></script>
+
+<style>
+  :root{
+    /* Esri blue drives the map chrome; Calcite violet (the Calcite Design
+       System's own brand color, #6d29cc) is reserved for the QueryEarth
+       "ask a question" feature so the AI surface reads as a distinct,
+       intentional layer on top of a standard Esri app rather than a skin. */
+    --qe-esri-blue: #007ac2;
+    --qe-ai-violet: #6d29cc;
+    --qe-ai-violet-soft: #f3ecfd;
+    --qe-ink: #151515;
+    --qe-panel-radius: 0px;
+    --qe-shadow: none;
+  }
+
+  html, body{ height:100%; margin:0; padding:0; font-family: var(--calcite-sans-family, "Avenir Next","Helvetica Neue",Arial,sans-serif); }
+  body{ position:relative; overflow:hidden; }
+
+  #shell{ height:100vh; width:100vw; }
+  arcgis-map{ height:100%; width:100%; }
+
+  /* ---------- boot scrim ---------- */
+  #bootScrim{ --calcite-scrim-background: #0b1622f2; }
+  .boot-copy{
+    display:flex; flex-direction:column; align-items:center; gap:14px;
+    color:#eaf2fb; text-align:center; padding:0 24px;
+  }
+  .boot-title{ font-size:1.05rem; font-weight:600; letter-spacing:.01em; }
+  .boot-log{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:.78rem; line-height:1.65; color:#8fb8e8; min-height:4.9em;
+    text-align:left; white-space:pre;
+  }
+  .boot-log .ok{ color:#5ee6a8; }
+
+  /* ---------- top navigation ---------- */
+  calcite-navigation{ --calcite-navigation-logo-icon-color: var(--qe-esri-blue); }
+  .qe-wordmark{ font-weight:700; letter-spacing:-0.01em; }
+  .qe-wordmark span{ color: var(--qe-ai-violet); }
+
+  /* ---------- floating search (top left, rectangular) ---------- */
+  .qe-search-float{
+    position:absolute; top:16px; left:16px;
+    width:min(440px, calc(100vw - 32px)); z-index:40;
+  }
+  .qe-search-card{
+    background:#fff; border-radius:0;
+    border:1px solid #c8c8c8; overflow:hidden;
+  }
+  .qe-search-row{ display:flex; align-items:flex-start; gap:8px; padding:8px 8px 8px 12px; }
+  .qe-search-row calcite-icon{ color: var(--qe-ai-violet); flex:none; }
+  .qe-search-row calcite-text-area {
+  flex: 1;
+  --calcite-input-border-radius: 0px;
+}
+  .qe-search-row calcite-input-text{ flex:1; --calcite-input-border-radius: 0px; margin-top: 6px}
+  .qe-search-row calcite-button{ --calcite-button-corner-radius: 0px; }
+
+  .qe-results{ border-top:1px solid #eceff2; max-height:min(46vh, 420px); overflow-y:auto; }
+  .qe-results-meta{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 16px 4px; font-size:.78rem; color:#6a6a6a;
+  }
+  .qe-results-meta calcite-chip{ --calcite-chip-background-color: var(--qe-ai-violet-soft); --calcite-chip-text-color: var(--qe-ai-violet); }
+  .qe-empty{ padding:22px 16px 26px; text-align:center; color:#7a7a7a; font-size:.85rem; }
+
+  calcite-list-item::part(container){ cursor:pointer; }
+
+  /* ---------- bottom-right wayback time control ---------- */
+  .qe-timeline-float{
+    position:absolute; right:16px; bottom:34px; z-index:35;
+    background:#fff; border-radius:0px;
+    border:1px solid #c8c8c8; padding:12px 14px 14px; width:250px;
+  }
+  .qe-timeline-head{ display:flex; align-items:center; gap:6px; font-size:.72rem; font-weight:600; color:#55606a; text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }
+  .qe-timeline-head calcite-icon{ color: var(--qe-esri-blue); }
+  .qe-year-pills{ display:flex; gap:6px; margin-bottom:10px; }
+  .qe-year-pill{ flex:1; --calcite-button-corner-radius: 0px; }
+  .qe-ref-row{ display:flex; align-items:center; justify-content:space-between; border-top:1px solid #f0f0f0; padding-top:9px; }
+  .qe-ref-row .lbl{ font-size:.8rem; color:#3b3b3b; }
+  .qe-imagery-caption{ font-size:.7rem; color:#8a8a8a; margin-top:8px; line-height:1.4; }
+
+  /* Keep the SDK's default attribution bar clear of our floating panel */
+  arcgis-map::part(attribution){ margin-right:270px; }
+</style>
+</head>
+<body>
+
+  <!-- ============ boot sequence — mirrors the QueryEarth Python init ============ -->
+  <calcite-scrim id="bootScrim">
+    <div class="boot-copy">
+      <calcite-loader scale="l" label="Starting ESRI Earth Engine"></calcite-loader>
+      <div class="boot-title">Starting the ESRI Earth Engine…</div>
+      <div class="boot-log" id="bootLog"></div>
+    </div>
+  </calcite-scrim>
+
+  <calcite-shell id="shell" content-behind>
+
+    <calcite-navigation slot="header" style="border-block-end:1px solid #e4e4e4;">
+      <calcite-navigation-logo slot="logo" icon="esri-logo" heading-tag="span">
+        <span slot="heading" class="qe-wordmark">ESRI Earth Engine</span>
+        <span slot="description">Natural-language geospatial search · built for ArcGIS</span>
+      </calcite-navigation-logo>
+    </calcite-navigation>
+
+    <arcgis-map id="mapEl" basemap="osm" center="-121.95,37.42" zoom="9">
+      <arcgis-zoom slot="top-right"></arcgis-zoom>
+    </arcgis-map>
+
+    <!-- ============ floating natural-language search (top left) ============ -->
+    <div class="qe-search-float">
+      <div class="qe-search-card">
+        <div class="qe-search-row">
+          <calcite-icon icon="sparkle" scale="m"></calcite-icon>
+          <calcite-text-area id="queryInput" placeholder="What do you want to find?" rows="2" resize="vertical"></calcite-text-area>
+          <calcite-button id="runBtn" icon-start="search" disabled loading>Search</calcite-button>
+        </div>
+
+        <div class="qe-results" id="resultsWrap" hidden>
+          <div class="qe-results-meta">
+            <span id="resultsMeta">—</span>
+          </div>
+          <calcite-list id="resultsList" selection-appearance="border" label="ESRI Earth Engine results"></calcite-list>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ bottom-right Wayback time control ============ -->
+    <div class="qe-timeline-float">
+      <div class="qe-timeline-head"><calcite-icon icon="time" scale="s"></calcite-icon> Imagery vintage</div>
+      <div class="qe-year-pills" id="yearPills">
+        <calcite-button class="qe-year-pill" data-year="none" scale="s" appearance="solid" kind="brand">Map</calcite-button>
+        <calcite-button class="qe-year-pill" data-year="2014" scale="s" appearance="outline" kind="neutral">2014</calcite-button>
+        <calcite-button class="qe-year-pill" data-year="2022" scale="s" appearance="outline" kind="neutral">2022</calcite-button>
+        <calcite-button class="qe-year-pill" data-year="latest" scale="s" appearance="outline" kind="neutral">2026</calcite-button>
+      </div>
+      <div class="qe-ref-row">
+        <span class="lbl">Reference labels</span>
+        <calcite-switch id="refToggle" scale="s" disabled></calcite-switch>
+      </div>
+      <div class="qe-imagery-caption" id="imageryCaption">World Imagery Wayback · Esri Living Atlas</div>
+    </div>
+
+  </calcite-shell>
+
+<script type="module">
+  const bootLog   = document.getElementById("bootLog");
+  const bootScrim = document.getElementById("bootScrim");
+  const runBtn = document.getElementById("runBtn");
+  const queryInput = document.getElementById("queryInput");
+  const resultsWrap = document.getElementById("resultsWrap");
+  const resultsMeta = document.getElementById("resultsMeta");
+  const resultsList = document.getElementById("resultsList");
+  const yearPills = document.getElementById("yearPills");
+  const refToggle = document.getElementById("refToggle");
+  const imageryCaption = document.getElementById("imageryCaption");
+  const mapEl = document.getElementById("mapEl");
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function typeLine(text, cls){
+    return new Promise(resolve => {
+      const line = document.createElement("div");
+      if (cls) line.className = cls;
+      bootLog.appendChild(line);
+      let i = 0;
+      const t = setInterval(() => {
+        line.textContent = text.slice(0, ++i);
+        if (i >= text.length){ clearInterval(t); resolve(); }
+      }, 12);
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 1. Boot sequence — call /api/init, mirroring qe.initialize()
+  // ---------------------------------------------------------------
+  async function bootQueryEarth(){
+    await typeLine("Setting things up for you!");
+    try {
+      const resp = await fetch(`${API_BASE}/api/init`, { 
+        method: "POST", 
+        signal: AbortSignal.timeout(30000) // increase timeout for model loading if needed
+      });
+    } catch (err) {
+      await sleep(600); // simulated model + index load time for the demo
+      await typeLine("  engine ready (demo mode — sample data).", "ok");
+    }
+    runBtn.loading = false;
+    runBtn.disabled = false;
+    bootScrim.hidden = true;
+  }
+
+  // ---------------------------------------------------------------
+  // 2. Map setup — basemap, Wayback historical imagery, reference overlay
+  // ---------------------------------------------------------------
+  let graphicsLayer, view, waybackLayers = {}, refLayer, Graphic, Point, Polyline, Polygon;
+
+  function parseDateFromTitle(title){
+    const m = /(\d{4}-\d{2}-\d{2})/.exec(title || "");
+    return m ? new Date(m[1]) : null;
+  }
+  function nearestByDate(releases, target){
+    return releases.reduce((best, r) =>
+      Math.abs(r.date - target) < Math.abs(best.date - target) ? r : best
+    );
+  }
+
+  async function setupMap(){
+    const [WebTileLayer, VectorTileLayer, GraphicsLayer, GraphicMod, PointMod, PolylineMod, PolygonMod, Measurement] = await $arcgis.import([
+      "esri/layers/WebTileLayer",
+      "esri/layers/VectorTileLayer",
+      "esri/layers/GraphicsLayer",
+      "esri/Graphic",
+      "esri/geometry/Point",
+      "esri/geometry/Polyline",
+      "esri/geometry/Polygon",
+      "esri/widgets/Measurement",
+    ]);
+    Graphic = GraphicMod;
+    Point = PointMod;
+    Polyline = PolylineMod;
+    Polygon = PolygonMod;
+
+    const map = mapEl.map;
+    view = mapEl.view;
+
+    const measurementWidget = new Measurement({
+      view: view,
+      position: "top-right",
+    });
+    view.ui.add(measurementWidget, "top-right");
+
+    graphicsLayer = new GraphicsLayer({ title: "QueryEarth results" });
+    map.add(graphicsLayer);
+
+    // Esri Hybrid Reference Layer — road / place / boundary labels for use over imagery
+    refLayer = new VectorTileLayer({
+      portalItem: { id: "30d6b8271e1849cd9c3042060001f425" },
+      visible: false,
+      title: "Reference labels",
+    });
+    map.add(refLayer);
+
+    // World Imagery Wayback
+    try {
+      const resp = await fetch("https://s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json");
+      if (!resp.ok) throw new Error("wayback config unavailable");
+      const cfg = await resp.json();
+      const releases = Object.values(cfg)
+        .map(r => ({ ...r, date: parseDateFromTitle(r.itemTitle) }))
+        .filter(r => r.date)
+        .sort((a, b) => a.date - b.date);
+
+      if (releases.length){
+        const picks = {
+          "2014": releases[0],
+          "2022": nearestByDate(releases, new Date("2022-06-01")),
+          "latest": releases[releases.length - 1],
+        };
+        for (const [key, rel] of Object.entries(picks)){
+          waybackLayers[key] = new WebTileLayer({
+            urlTemplate: rel.itemURL,
+            title: rel.itemTitle,
+            copyright: "Esri, Maxar, Earthstar Geographics",
+            visible: false,
+          });
+          map.add(waybackLayers[key]);
+        }
+        imageryCaption.textContent = `Showing current map · Wayback back to ${picks["2014"].date.toISOString().slice(0,10)}`;
+        refToggle.disabled = false;
+      } else {
+        throw new Error("no releases parsed");
+      }
+    } catch (err) {
+      console.warn("Wayback imagery unavailable:", err);
+      yearPills.querySelectorAll(".qe-year-pill").forEach(b => {
+        if (b.dataset.year !== "none"){ b.disabled = true; }
+      });
+      imageryCaption.textContent = "Historical imagery needs network access to Esri tile services.";
+    }
+  }
+
+  function selectYear(year){
+    yearPills.querySelectorAll(".qe-year-pill").forEach(b => {
+      const active = b.dataset.year === year;
+      b.appearance = active ? "solid" : "outline";
+      b.kind = active ? "brand" : "neutral";
+    });
+    const baseLayer = mapEl.map?.basemap?.baseLayers?.getItemAt?.(0);
+    if (baseLayer) baseLayer.visible = (year === "none");
+    Object.entries(waybackLayers).forEach(([key, layer]) => { layer.visible = (key === year); });
+
+    // Always bring graphicsLayer to the top after toggling tile layers
+    if (graphicsLayer) {
+      mapEl.map.reorder(graphicsLayer, mapEl.map.layers.length - 1);
+    }
+  }
+
+  yearPills.querySelectorAll(".qe-year-pill").forEach(btn => {
+    btn.addEventListener("click", () => selectYear(btn.dataset.year));
+  });
+
+  refToggle.addEventListener("calciteSwitchChange", () => {
+    if (refLayer) refLayer.visible = refToggle.checked;
+  });
+
+  // ---------------------------------------------------------------
+  // 3. Search — calls /api/predict
+  // ---------------------------------------------------------------
+  const DEMO_SITES = [
+    { name: "Moffett Solar Array",        cat: "Solar farm",        lon: -122.058, lat: 37.402, tags: ["solar","farm","renewable","energy","panels"] },
+    { name: "Panoche Valley Solar",       cat: "Solar farm",        lon: -121.107, lat: 36.685, tags: ["solar","farm","renewable","energy","panels"] },
+    { name: "Coyote Valley Basin",        cat: "Flood-prone land",   lon: -121.775, lat: 37.20,  tags: ["flood","water","basin","risk","orchard","almond"] },
+    { name: "Pajaro River Orchards",      cat: "Flooded orchard",    lon: -121.744, lat: 36.898, tags: ["flood","orchard","almond","farm","water"] },
+    { name: "CZU Lightning Complex Scar", cat: "Wildfire burn scar", lon: -122.228, lat: 37.176, tags: ["wildfire","fire","burn","scar","forest"] },
+    { name: "Santa Cruz Mtns Fire Edge",  cat: "Wildfire burn scar", lon: -122.10,  lat: 37.20,  tags: ["wildfire","fire","burn","scar","forest"] },
+    { name: "Coyote Creek Subdivision",   cat: "New housing",        lon: -121.79,  lat: 37.31,  tags: ["housing","subdivision","residential","new","development"] },
+    { name: "Morgan Hill Infill",         cat: "New housing",        lon: -121.65,  lat: 37.13,  tags: ["housing","subdivision","residential","new","development"] },
+    { name: "Milpitas Logistics Park",    cat: "Warehouse expansion",lon: -121.907, lat: 37.428, tags: ["warehouse","logistics","industrial","expansion"] },
+    { name: "Livermore Vineyard Block",   cat: "Vineyard",           lon: -121.768, lat: 37.682, tags: ["vineyard","wine","grape","agriculture"] },
+    { name: "Coyote Hills Wetland",       cat: "Wetland restoration",lon: -122.098, lat: 37.556, tags: ["wetland","restoration","marsh","habitat"] },
+    { name: "Calaveras Reservoir",        cat: "Reservoir drawdown", lon: -121.822, lat: 37.484, tags: ["reservoir","drought","water","drawdown"] },
+    { name: "Almaden Quarry",             cat: "Quarry",             lon: -121.822, lat: 37.183, tags: ["quarry","mining","aggregate"] },
+    { name: "Altamont Wind Resource Area",cat: "Wind farm",          lon: -121.64,  lat: 37.72,  tags: ["wind","turbine","renewable","energy"] },
+  ];
+
+  function mockPredict(query){
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const scored = DEMO_SITES.map(site => {
+      let score = 0.12 + Math.random() * 0.08;
+      terms.forEach(t => {
+        if (site.name.toLowerCase().includes(t)) score += 0.32;
+        if (site.cat.toLowerCase().includes(t)) score += 0.30;
+        site.tags.forEach(tag => { if (tag.includes(t) || t.includes(tag)) score += 0.22; });
+      });
+      return { ...site, score: Math.min(0.98, score) };
+    }).sort((a, b) => b.score - a.score);
+    const strong = scored.filter(s => s.score > 0.4);
+    return (strong.length ? strong : scored.slice(0, 6)).slice(0, 8);
+  }
+
+  // Replace your geojsonToResults function with this safe version
+  function geojsonToResults(gj){
+    if (!gj || !gj.features) return [];
+
+    return gj.features.map((f, idx) => {
+      let lon, lat;
+
+      if (f.geometry) {
+        const type = f.geometry.type;
+        const c = f.geometry.coordinates;
+
+        if (type === "Point") {
+          lon = c[0];
+          lat = c[1];
+        } else if (type === "LineString") {
+          lon = c[Math.floor(c.length / 2)][0];
+          lat = c[Math.floor(c.length / 2)][1];
+        } else if (type === "MultiLineString") {
+          lon = c[0][Math.floor(c[0].length / 2)][0];
+          lat = c[0][Math.floor(c[0].length / 2)][1];
+        } else if (type === "Polygon") {
+          lon = c[0][0][0];
+          lat = c[0][0][1];
+        } else if (type === "MultiPolygon") {
+          lon = c[0][0][0][0];
+          lat = c[0][0][0][1];
+        }
+      }
+
+      return {
+        name: f.properties?.name || f.properties?.title || f.properties?.LABEL || f.properties?.id || `Feature ${idx + 1}`,
+        cat: f.properties?.category || f.properties?.type || f.properties?.CLASS || "Model Output",
+        lon: lon ?? -121.95,
+        lat: lat ?? 37.42,
+        score: f.properties?.score ?? f.properties?.confidence ?? 1.0,
+        geometry: f.geometry || null,
+      };
+    });
+  }
+
+  function buildGeometry(geojsonGeom) {
+    if (!geojsonGeom) return null;
+    const type = geojsonGeom.type;
+    const c = geojsonGeom.coordinates;
+
+    if (type === "Point") {
+      return new Point({ longitude: c[0], latitude: c[1] });
+    } else if (type === "LineString") {
+      return new Polyline({ paths: [c.map(pt => [pt[0], pt[1]])], spatialReference: { wkid: 4326 } });
+    } else if (type === "MultiLineString") {
+      return new Polyline({ paths: c.map(ring => ring.map(pt => [pt[0], pt[1]])), spatialReference: { wkid: 4326 } });
+    } else if (type === "Polygon") {
+      return new Polygon({ rings: c.map(ring => ring.map(pt => [pt[0], pt[1]])), spatialReference: { wkid: 4326 } });
+    } else if (type === "MultiPolygon") {
+      const rings = [];
+      c.forEach(poly => poly.forEach(ring => rings.push(ring.map(pt => [pt[0], pt[1]]))));
+      return new Polygon({ rings, spatialReference: { wkid: 4326 } });
+    }
+    return null;
+  }
+
+  function buildSymbol(geojsonGeom, isTop) {
+    const type = geojsonGeom?.type;
+    const fillColor = isTop ? [109, 41, 204, 0.35] : [0, 122, 194, 0.30];
+    const lineColor = isTop ? [109, 41, 204, 0.9] : [0, 122, 194, 0.85];
+
+    if (type === "LineString" || type === "MultiLineString") {
+      return {
+        type: "simple-line",
+        color: lineColor,
+        width: isTop ? 4 : 3,
+        style: "solid",
+      };
+    } else if (type === "Polygon" || type === "MultiPolygon") {
+      return {
+        type: "simple-fill",
+        color: fillColor,
+        outline: { color: lineColor, width: 2 },
+        style: "solid",
+      };
+    }
+    return {
+      type: "simple-marker",
+      style: "circle",
+      color: isTop ? [109, 41, 204, 0.9] : [0, 122, 194, 0.85],
+      size: isTop ? 13 : 10,
+      outline: { color: "#ffffff", width: 1.5 },
+    };
+  }
+
+  function renderResults(query, results){
+    resultsWrap.hidden = false;
+    resultsList.innerHTML = "";
+    graphicsLayer.removeAll();
+
+    mapEl.map.reorder(graphicsLayer, mapEl.map.layers.length - 1);
+
+    if (!results.length){
+      resultsMeta.textContent = `No matches for "${query}"`;
+      const empty = document.createElement("div");
+      empty.className = "qe-empty";
+      empty.textContent = "Our Search Engine couldn't find a match. The feature doesn't exist in the area.";
+      resultsList.appendChild(empty);
+      return;
+    }
+
+    resultsMeta.textContent = `${results.length} result${results.length === 1 ? "" : "s"} for "${query}"`;
+
+    results.forEach((r, idx) => {
+      const item = document.createElement("calcite-list-item");
+      item.label = r.name;
+      item.description = r.cat;
+      item.addEventListener("click", () => focusResult(r));
+      resultsList.appendChild(item);
+
+      const geom = buildGeometry(r.geometry);
+      if (!geom) return;
+
+      graphicsLayer.add(new Graphic({
+        geometry: geom,
+        symbol: buildSymbol(r.geometry, idx === 0),
+        attributes: { name: r.name, cat: r.cat },
+        popupTemplate: {
+          title: "{name}",
+          content: `${r.cat}`,
+        },
+      }));
+    });
+
+    if (view && results.length){
+      view.goTo(results.map(r => [r.lon, r.lat]), { duration: 700 }).catch(() => {});
+    }
+  }
+
+  function focusResult(r){
+    if (!view) return;
+    if (r.geometry && (r.geometry.type === "Polygon" || r.geometry.type === "MultiPolygon" ||
+        r.geometry.type === "LineString" || r.geometry.type === "MultiLineString")) {
+      const geom = buildGeometry(r.geometry);
+      if (geom) {
+        view.goTo({ target: geom, zoom: 15 }, { duration: 600 });
+        const g = graphicsLayer.graphics.find(gr => gr.attributes?.name === r.name);
+        if (g) view.openPopup({ features: [g], location: geom.extent?.center || g.geometry });
+        return;
+      }
+    }
+    view.goTo({ center: [r.lon, r.lat], zoom: 15 }, { duration: 600 });
+    const g = graphicsLayer.graphics.find(gr => gr.attributes?.name === r.name);
+    if (g) view.openPopup({ features: [g], location: g.geometry });
+  }
+
+  async function runQuery(query){
+    const q = (query ?? queryInput.value).trim();
+    if (!q) return;
+    queryInput.value = q;
+    runBtn.loading = true;
+    resultsWrap.hidden = false;
+    resultsMeta.textContent = "Searching...";
+    resultsList.innerHTML = "";
+
+    let results;
+    try {
+      const resp = await fetch(`http://127.0.0.1:8000/api/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q })
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        throw new Error(`Server returned ${resp.status}: ${errorText}`);
+      }
+
+      const data = await resp.json();
+      console.log("Raw GeoJSON output from QueryEarth:", data); // Check your browser console to inspect!
+
+      results = geojsonToResults(data);
+      
+      if (results.length === 0) {
+        console.warn("GeoDataFrame was returned empty by qe.predict()");
+      }
+    } catch (err) {
+      console.error("API Prediction Failed! Reason:", err);
+      results = []; 
+    }
+
+    renderResults(q, results);
+    runBtn.loading = false;
+  }
+
+    runBtn.addEventListener("click", () => runQuery());
+    queryInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Prevents adding an unwanted newline on submit
+      runQuery();
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Kick everything off once the map view is ready
+  // ---------------------------------------------------------------
+  mapEl.addEventListener("arcgisViewReadyChange", async () => {
+    await setupMap();
+    bootQueryEarth();
+  }, { once: true });
+</script>
+</body>
+</html>

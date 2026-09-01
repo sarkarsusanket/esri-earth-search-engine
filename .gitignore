@@ -1,3 +1,4 @@
+.env
 /data
 env/
 */results/
@@ -14,3 +15,14 @@ results/
 *.png
 *.pth
 *.geojson
+
+*.pt
+*/runs
+
+embeddings/
+weights/
+*__pycache__/
+
+*.zip
+clip_search*
+*.dlpk
