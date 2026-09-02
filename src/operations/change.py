@@ -104,24 +104,24 @@ def change(
     to_scores = np.asarray(to_scores, dtype=np.float64)
     to_coords = np.column_stack((to_lat, to_lon))
 
-    Path("results").mkdir(parents=True, exist_ok=True)
+    # Path("results").mkdir(parents=True, exist_ok=True)
 
     # --- Save raw search points to Shapefiles ---
-    if len(from_scores) > 0:
-        gdf_from = gpd.GeoDataFrame(
-            {"score": from_scores},
-            geometry=gpd.points_from_xy(from_coords[:, 1], from_coords[:, 0]),
-            crs="EPSG:4326"
-        )
-        gdf_from.to_file(f"results/from_pts_{from_time}_{from_year}.shp")
+    # if len(from_scores) > 0:
+    #     gdf_from = gpd.GeoDataFrame(
+    #         {"score": from_scores},
+    #         geometry=gpd.points_from_xy(from_coords[:, 1], from_coords[:, 0]),
+    #         crs="EPSG:4326"
+    #     )
+    #     gdf_from.to_file(f"results/from_pts_{from_time}_{from_year}.shp")
 
-    if len(to_scores) > 0:
-        gdf_to = gpd.GeoDataFrame(
-            {"score": to_scores},
-            geometry=gpd.points_from_xy(to_coords[:, 1], to_coords[:, 0]),
-            crs="EPSG:4326"
-        )
-        gdf_to.to_file(f"results/to_pts_{to_time}_{to_year}.shp")
+    # if len(to_scores) > 0:
+    #     gdf_to = gpd.GeoDataFrame(
+    #         {"score": to_scores},
+    #         geometry=gpd.points_from_xy(to_coords[:, 1], to_coords[:, 0]),
+    #         crs="EPSG:4326"
+    #     )
+    #     gdf_to.to_file(f"results/to_pts_{to_time}_{to_year}.shp")
 
     # --- Match points across time periods ---
     to_idx, from_idx = _nearest_match_coords(from_coords, to_coords, config.CHANGE_DISTANCE_THRESHOLD)
@@ -134,17 +134,17 @@ def change(
     m_from_scores = from_scores[from_idx]
     minus_scores = m_to_scores - m_from_scores
 
-    gdf_matched = gpd.GeoDataFrame(
-        {
-            "to_score": m_to_scores,
-            "from_score": m_from_scores,
-            "minus_score": minus_scores
-        },
-        geometry=gpd.points_from_xy(to_coords[to_idx, 1], to_coords[to_idx, 0]),
-        crs="EPSG:4326"
-    )
-    print(gdf_matched)
-    gdf_matched.to_file(rf"D:\Code\query-earth\results\to_matched_{to_time}_{to_year}.shp")
+    # gdf_matched = gpd.GeoDataFrame(
+    #     {
+    #         "to_score": m_to_scores,
+    #         "from_score": m_from_scores,
+    #         "minus_score": minus_scores
+    #     },
+    #     geometry=gpd.points_from_xy(to_coords[to_idx, 1], to_coords[to_idx, 0]),
+    #     crs="EPSG:4326"
+    # )
+    # print(gdf_matched)
+    # gdf_matched.to_file(rf"D:\Code\query-earth\results\to_matched_{to_time}_{to_year}.shp")
 
     # --- Vectorized Mode Filtering ---
     if mode == "new":

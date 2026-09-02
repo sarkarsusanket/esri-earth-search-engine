@@ -1,0 +1,7 @@
+google-genai
+fastapi
+geopandas
+open-clip-torch
+transformers
+pyarrow
+sentence_transformers

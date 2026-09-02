@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Add module path and import queryearth
-sys.path.append(r"D:\Code\query-earth\src")
+sys.path.append(r"D:\Code\esri-earth-search-engine\src")
 import queryearth
 
 app = FastAPI(title="ESRI Earth Search Engine API")
