@@ -488,14 +488,28 @@ Rivers are structured waterway data from OSM.
 --------------------------------------------------
 
 Query:
-"Find residential areas in San Francisco"
+"Find hospitals in LA within 5 miles of a major road."
 
 Plan:
-a = geocode("San Francisco")
-output = osm(a, "residential", "landuse")
+a = geocode("Los Angeles")
+b = osm(a, "primary, motorway, trunk", "roads")
+c = buffer(b, 8.04672)
+output = osm(c, "hospitals", "pois")
 
 Reason:
-Residential areas are structured landuse classification from OSM.
+Avoid interestcion unnscecary/extra tool call (as the fucntions already have a region command)
+
+--------------------------------------------------
+
+Query:
+"Find new buildings that have come up in San Diego which are atleast a mile away from a fire station, in wildfire prone areas"
+
+Plan: a = geocode("San Diego")
+b = osm(a, "fire_station", "pois")
+c = buffer(b, 1.60934)
+d = demo(a, "wildfire prone areas")
+e = intersection(c, d)
+output = change-high(e, "buildings", "recent", "present", "new")
 
 --------------------------------------------------
 

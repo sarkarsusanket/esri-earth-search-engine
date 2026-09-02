@@ -22,6 +22,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import geopandas as gpd
+from geopandas import GeoDataFrame
 from shapely.geometry.polygon import orient
 
 import config
@@ -79,6 +80,12 @@ class QueryEarth:
         )
         self.executor = PipelineExecutor(self.context)
 
+    def clean_duplicates(self, gdf:GeoDataFrame):
+        gdf["geometry"] = gdf["geometry"].set_precision(1e-6)
+        gdf_clean = gdf.drop_duplicates(subset=["geometry"])
+
+        return gdf_clean
+
 
     def find(self, query: str, save_gdf = False, **kwargs):
         """Given a natural-language query string, parse it into a pipeline
@@ -90,6 +97,7 @@ class QueryEarth:
 
         plan = query_parser.parse_query(query)
         result_gdf = self.executor.run_plan(plan)
+        result_gdf = self.clean_duplicates(result_gdf)
 
         print(f"Found the objects in {(time.time() - begin)} seconds.")
 
