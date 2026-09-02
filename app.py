@@ -1,16 +1,21 @@
+import os
 import sys
 import json
+from typing import Dict, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
-# Add module path and import queryearth
-sys.path.append(r"D:\Code\esri-earth-search-engine\src")
+# Ensure stdout flushes immediately so all prints appear in the terminal right away
+sys.stdout.reconfigure(line_buffering=True)
+
+sys.path.append(r"/home/susanket/esri-earth-search-engine/src")
 import queryearth
 
 app = FastAPI(title="ESRI Earth Search Engine API")
 
-# Enable CORS for frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,58 +24,81 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-qe = None
+engines: Dict[str, queryearth.QueryEarth] = {}
 
-@app.on_event("startup")
-def startup_event():
-    """Runs once when Uvicorn starts."""
-    global qe
-    print("Initializing engine...")
-    qe = queryearth.QueryEarth()
-    qe.initialize()
-    print("QueryEarth engine initialized successfully.")
+class InitRequest(BaseModel):
+    api_key: str
 
 class QueryRequest(BaseModel):
     query: str
+    api_key: Optional[str] = None
 
 @app.get("/")
 def read_root():
-    """Root health check endpoint."""
-    return {"status": "online", "message": "QueryEarth API Server Running"}
+    return FileResponse("index.html")
 
 @app.post("/api/init")
-def api_init():
-    """Health check for frontend boot sequence."""
-    if qe is None:
-        raise HTTPException(status_code=500, detail="Engine not initialized")
-    return {"status": "ok"}
+async def api_init(req: InitRequest):
+    key = req.api_key.strip() if req.api_key else ""
+    if not key:
+        raise HTTPException(status_code=400, detail="API key is required.")
+
+    try:
+        os.environ['GEMINI_API_KEY'] = key
+        
+        def _init_engine():
+            print(f"\n[INIT] Initializing QueryEarth engine for key ...{key[-6:]}...", flush=True)
+            engine = queryearth.QueryEarth()
+            engine.initialize()
+            print("[INIT] Engine initialization complete!", flush=True)
+            return engine
+
+        engines[key] = await run_in_threadpool(_init_engine)
+        return {"status": "ok", "message": "Engine initialized successfully"}
+    except Exception as e:
+        print(f"[INIT ERROR] Failed to initialize engine: {e}", flush=True)
+        raise HTTPException(status_code=500, detail=f"Failed to initialize engine: {str(e)}")
 
 @app.post("/api/predict")
-def api_predict(req: QueryRequest):
-    """Runs qe.predict(query) and returns GeoJSON."""
-    if qe is None:
-        raise HTTPException(status_code=500, detail="Engine not ready")
-    
+async def api_predict(req: QueryRequest):
+    key = req.api_key.strip() if req.api_key else os.environ.get('GEMINI_API_KEY', '')
+
+    engine = engines.get(key)
+    if engine is None:
+        if engines:
+            engine = list(engines.values())[-1]
+        else:
+            raise HTTPException(status_code=400, detail="Engine is not initialized.")
+
+    # Re-apply key to environment for this thread's context
+    if key:
+        os.environ['GEMINI_API_KEY'] = key
+
+    print(f"\n[QUERY START] Received prompt: '{req.query}'", flush=True)
+
     try:
-        # Run inference using your local model
-        gdf = qe.find(req.query)
-        print(gdf)
-        
-        # Calculate representative point (longitude/latitude) for mapping
-        # if not gdf.empty:
-        #     centroids = gdf.geometry.centroid
-        #     gdf["_lon"] = centroids.x
-        #     gdf["_lat"] = centroids.y
-        
+        def _run_find():
+            print(f"[PREDICT] Invoking engine.find('{req.query}')...", flush=True)
+            results_gdf = engine.find(req.query)
+            print(f"[PREDICT] engine.find finished. Found {len(results_gdf) if results_gdf is not None else 0} features.", flush=True)
+            return results_gdf
+
+        gdf = await run_in_threadpool(_run_find)
+
+        if gdf is None or gdf.empty:
+            print("[WARN] GeoDataFrame returned by engine.find() is empty.", flush=True)
+            return {"type": "FeatureCollection", "features": []}
+
         geojson_data = json.loads(gdf.to_json())
+        print(f"[SUCCESS] Returning {len(geojson_data.get('features', []))} GeoJSON features to frontend.", flush=True)
         return geojson_data
+
     except Exception as e:
-        print(e)
+        print(f"[ERROR] Exception during query prediction: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-import uvicorn
 if __name__ == "__main__":
-    try:
-        uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
-    except KeyboardInterrupt:
-        print("\nServer stopped gracefully.")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_keep_alive=300)

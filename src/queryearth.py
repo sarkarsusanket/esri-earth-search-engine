@@ -101,9 +101,9 @@ class QueryEarth:
 
         print(f"Found the objects in {(time.time() - begin)} seconds.")
 
-        if save_gdf:
-            os.makedirs(rf"results\{query.replace(" ", "_")}", exist_ok=True)
-            result_gdf.to_file(rf"results\{query.replace(" ", "_")}\output .shp")
+        # if save_gdf:
+        #     os.makedirs(rf"results\{query.replace(" ", "_")}", exist_ok=True)
+        #     result_gdf.to_file(rf"results\{query.replace(" ", "_")}\output .shp")
 
         return result_gdf
 

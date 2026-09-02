@@ -13,7 +13,7 @@ import torch
 # ------------------------------------------------------------------
 # Layout
 # ------------------------------------------------------------------
-EMBEDDINGS_DIR = rf"E:\Data\query-earth\embeddings"
+EMBEDDINGS_DIR = rf"/mnt/sdc1/susanket/embeddings"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -37,7 +37,7 @@ DEMO_PARQUET_PATH = os.path.join(EMBEDDINGS_DIR, "demography-emb.parquet")
 
 # Trained TabularTextCLIP checkpoint. Expected in weights/, e.g.
 # weights/demo_clip.pth — auto-detected so you don't have to hardcode a name.
-DEMO_CLIP_CKPT_PATH = _find_first(EMBEDDINGS_DIR, ("*demo*.pth", "*demo*.pt", "*.pth", "*.pt"))
+DEMO_CLIP_CKPT_PATH = os.path.join(EMBEDDINGS_DIR, "demo_embedder.pth")
 
 # Local, offline text embedder for demo-text queries. Smallest well-supported general
 # text embedder available (~23M params, 384-dim, CPU-friendly, no network).
@@ -48,8 +48,8 @@ TEXT_EMBED_DIM = 384  # all-MiniLM-L6-v2 output dim. Update this if you swap the
 # Vision assets
 # ------------------------------------------------------------------
 VISION_INDEX_DIRS = {
-    "low": rf"{EMBEDDINGS_DIR}\turboquant\vision-low-2026",
-    "high": rf"{EMBEDDINGS_DIR}\turboquant\vision-high-2026",
+    "low": rf"{EMBEDDINGS_DIR}/turboquant/vision-low-2026",
+    "high": rf"{EMBEDDINGS_DIR}/turboquant/vision-high-2026",
 }
 DEFAULT_RESOLUTION = "high"
 RESOLUTION_DIST_MAP = {
@@ -68,7 +68,7 @@ VISION_YEARS = {
 # Per-year vision index directories, keyed as {year: {resolution: path}}.
 VISION_YEAR_INDEX_DIRS = {
     year: {
-        res: rf"{EMBEDDINGS_DIR}\turboquant\vision-{res}-{year}"
+        res: rf"{EMBEDDINGS_DIR}/turboquant/vision-{res}-{year}"
         for res in ("low", "high")
     }
     for year in VISION_YEARS.values()
@@ -90,7 +90,7 @@ CLIP_VLM_PATH = rf"{EMBEDDINGS_DIR}/RS5M_ViT-H-14.pt"
 # ------------------------------------------------------------------
 # OSM assets
 # ------------------------------------------------------------------
-OSM_EMBEDDING_DIR = rf"{EMBEDDINGS_DIR}\osm"
+OSM_EMBEDDING_DIR = rf"{EMBEDDINGS_DIR}/osm"
 OSM_YEARS = ["2014", "2026"]
 OSM_DEFAULT_YEAR = "2026"
 OSM_CATEGORY_FILES = [

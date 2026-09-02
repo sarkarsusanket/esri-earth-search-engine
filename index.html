@@ -14,10 +14,6 @@
 
 <style>
   :root{
-    /* Esri blue drives the map chrome; Calcite violet (the Calcite Design
-       System's own brand color, #6d29cc) is reserved for the QueryEarth
-       "ask a question" feature so the AI surface reads as a distinct,
-       intentional layer on top of a standard Esri app rather than a skin. */
     --qe-esri-blue: #007ac2;
     --qe-ai-violet: #6d29cc;
     --qe-ai-violet-soft: #f3ecfd;
@@ -36,15 +32,16 @@
   #bootScrim{ --calcite-scrim-background: #0b1622f2; }
   .boot-copy{
     display:flex; flex-direction:column; align-items:center; gap:14px;
-    color:#eaf2fb; text-align:center; padding:0 24px;
+    color:#eaf2fb; text-align:center; padding:0 24px; max-width: 400px; width: 100%;
   }
   .boot-title{ font-size:1.05rem; font-weight:600; letter-spacing:.01em; }
   .boot-log{
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size:.78rem; line-height:1.65; color:#8fb8e8; min-height:4.9em;
-    text-align:left; white-space:pre;
+    font-size:.78rem; line-height:1.65; color:#8fb8e8; min-height:2.9em;
+    text-align:left; white-space:pre; width: 100%;
   }
   .boot-log .ok{ color:#5ee6a8; }
+  .boot-log .err{ color:#ff6b6b; }
 
   /* ---------- top navigation ---------- */
   calcite-navigation{ --calcite-navigation-logo-icon-color: var(--qe-esri-blue); }
@@ -61,20 +58,18 @@
     border:1px solid #c8c8c8; overflow:hidden;
   }
   .qe-search-row{ display:flex; align-items:flex-start; gap:8px; padding:8px 8px 8px 12px; }
-  .qe-search-row calcite-icon{ color: var(--qe-ai-violet); flex:none; }
+  .qe-search-row calcite-icon{ color: var(--qe-ai-violet); flex:none; margin-top: 8px; }
   .qe-search-row calcite-text-area {
-  flex: 1;
-  --calcite-input-border-radius: 0px;
-}
-  .qe-search-row calcite-input-text{ flex:1; --calcite-input-border-radius: 0px; margin-top: 6px}
-  .qe-search-row calcite-button{ --calcite-button-corner-radius: 0px; }
+    flex: 1;
+    --calcite-input-border-radius: 0px;
+  }
+  .qe-search-row calcite-button{ --calcite-button-corner-radius: 0px; margin-top: 4px; }
 
   .qe-results{ border-top:1px solid #eceff2; max-height:min(46vh, 420px); overflow-y:auto; }
   .qe-results-meta{
     display:flex; align-items:center; justify-content:space-between;
     padding:10px 16px 4px; font-size:.78rem; color:#6a6a6a;
   }
-  .qe-results-meta calcite-chip{ --calcite-chip-background-color: var(--qe-ai-violet-soft); --calcite-chip-text-color: var(--qe-ai-violet); }
   .qe-empty{ padding:22px 16px 26px; text-align:center; color:#7a7a7a; font-size:.85rem; }
 
   calcite-list-item::part(container){ cursor:pointer; }
@@ -93,17 +88,30 @@
   .qe-ref-row .lbl{ font-size:.8rem; color:#3b3b3b; }
   .qe-imagery-caption{ font-size:.7rem; color:#8a8a8a; margin-top:8px; line-height:1.4; }
 
-  /* Keep the SDK's default attribution bar clear of our floating panel */
   arcgis-map::part(attribution){ margin-right:270px; }
 </style>
 </head>
 <body>
 
-  <!-- ============ boot sequence — mirrors the QueryEarth Python init ============ -->
+  <!-- ============ boot sequence — prompts for Google API Key ============ -->
   <calcite-scrim id="bootScrim">
     <div class="boot-copy">
-      <calcite-loader scale="l" label="Starting ESRI Earth Engine"></calcite-loader>
-      <div class="boot-title">Starting the ESRI Earth Engine…</div>
+      <calcite-loader id="bootLoader" scale="l" label="Starting ESRI Earth Engine" hidden></calcite-loader>
+      <div class="boot-title" id="bootTitle">Enter your Google API Key to start</div>
+
+      <div id="apiKeyForm" style="display: flex; flex-direction: column; gap: 12px; width: 100%; margin-top: 10px;">
+        <calcite-input-text 
+          id="apiKeyInput" 
+          type="password" 
+          placeholder="Enter API Key" 
+          label="Google API Key" 
+          clearable>
+        </calcite-input-text>
+        <calcite-button id="initBtn" appearance="solid" kind="brand" width="full">
+          Initialize Engine
+        </calcite-button>
+      </div>
+
       <div class="boot-log" id="bootLog"></div>
     </div>
   </calcite-scrim>
@@ -127,7 +135,7 @@
         <div class="qe-search-row">
           <calcite-icon icon="sparkle" scale="m"></calcite-icon>
           <calcite-text-area id="queryInput" placeholder="What do you want to find?" rows="2" resize="vertical"></calcite-text-area>
-          <calcite-button id="runBtn" icon-start="search" disabled loading>Search</calcite-button>
+          <calcite-button id="runBtn" icon-start="search" disabled>Search</calcite-button>
         </div>
 
         <div class="qe-results" id="resultsWrap" hidden>
@@ -158,19 +166,28 @@
   </calcite-shell>
 
 <script type="module">
-  const bootLog   = document.getElementById("bootLog");
-  const bootScrim = document.getElementById("bootScrim");
-  const runBtn = document.getElementById("runBtn");
-  const queryInput = document.getElementById("queryInput");
+  const bootLog     = document.getElementById("bootLog");
+  const bootScrim   = document.getElementById("bootScrim");
+  const bootLoader  = document.getElementById("bootLoader");
+  const bootTitle   = document.getElementById("bootTitle");
+  const apiKeyForm  = document.getElementById("apiKeyForm");
+  const apiKeyInput = document.getElementById("apiKeyInput");
+  const initBtn     = document.getElementById("initBtn");
+  const runBtn      = document.getElementById("runBtn");
+  const queryInput  = document.getElementById("queryInput");
   const resultsWrap = document.getElementById("resultsWrap");
   const resultsMeta = document.getElementById("resultsMeta");
   const resultsList = document.getElementById("resultsList");
-  const yearPills = document.getElementById("yearPills");
-  const refToggle = document.getElementById("refToggle");
+  const yearPills   = document.getElementById("yearPills");
+  const refToggle   = document.getElementById("refToggle");
   const imageryCaption = document.getElementById("imageryCaption");
-  const mapEl = document.getElementById("mapEl");
+  const mapEl       = document.getElementById("mapEl");
 
+  const API_BASE = window.location.origin;
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  
+  // Store initialized API key state in memory
+  let userApiKey = "";
 
   function typeLine(text, cls){
     return new Promise(resolve => {
@@ -186,23 +203,54 @@
   }
 
   // ---------------------------------------------------------------
-  // 1. Boot sequence — call /api/init, mirroring qe.initialize()
+  // 1. Boot sequence — call /api/init with user's API Key
   // ---------------------------------------------------------------
-  async function bootQueryEarth(){
-    await typeLine("Setting things up for you!");
+  async function handleInitialization() {
+    const key = apiKeyInput.value ? apiKeyInput.value.trim() : "";
+    if (!key) {
+      alert("Please enter your Google API key.");
+      return;
+    }
+
+    userApiKey = key;
+    apiKeyForm.style.display = "none";
+    bootLoader.hidden = false;
+    bootTitle.textContent = "Initializing ESRI Earth Engine...";
+    bootLog.innerHTML = "";
+
+    await typeLine("Initializing engine with provided key...");
+    
     try {
       const resp = await fetch(`${API_BASE}/api/init`, { 
         method: "POST", 
-        signal: AbortSignal.timeout(30000) // increase timeout for model loading if needed
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key }),
+        signal: AbortSignal.timeout(600000) // 10 minute timeout for startup
       });
+
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({ detail: "Unknown server error" }));
+        throw new Error(errJson.detail || `HTTP ${resp.status}`);
+      }
+
+      await typeLine("Engine ready!", "ok");
+      await sleep(400);
+
+      runBtn.loading = false;
+      runBtn.disabled = false;
+      bootScrim.hidden = true;
     } catch (err) {
-      await sleep(600); // simulated model + index load time for the demo
-      await typeLine("  engine ready (demo mode — sample data).", "ok");
+      await typeLine(`Failed: ${err.message}`, "err");
+      bootTitle.textContent = "Initialization failed. Try again.";
+      bootLoader.hidden = true;
+      apiKeyForm.style.display = "flex";
     }
-    runBtn.loading = false;
-    runBtn.disabled = false;
-    bootScrim.hidden = true;
   }
+
+  initBtn.addEventListener("click", handleInitialization);
+  apiKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleInitialization();
+  });
 
   // ---------------------------------------------------------------
   // 2. Map setup — basemap, Wayback historical imagery, reference overlay
@@ -247,7 +295,6 @@
     graphicsLayer = new GraphicsLayer({ title: "QueryEarth results" });
     map.add(graphicsLayer);
 
-    // Esri Hybrid Reference Layer — road / place / boundary labels for use over imagery
     refLayer = new VectorTileLayer({
       portalItem: { id: "30d6b8271e1849cd9c3042060001f425" },
       visible: false,
@@ -255,7 +302,6 @@
     });
     map.add(refLayer);
 
-    // World Imagery Wayback
     try {
       const resp = await fetch("https://s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json");
       if (!resp.ok) throw new Error("wayback config unavailable");
@@ -304,7 +350,6 @@
     if (baseLayer) baseLayer.visible = (year === "none");
     Object.entries(waybackLayers).forEach(([key, layer]) => { layer.visible = (key === year); });
 
-    // Always bring graphicsLayer to the top after toggling tile layers
     if (graphicsLayer) {
       mapEl.map.reorder(graphicsLayer, mapEl.map.layers.length - 1);
     }
@@ -321,39 +366,6 @@
   // ---------------------------------------------------------------
   // 3. Search — calls /api/predict
   // ---------------------------------------------------------------
-  const DEMO_SITES = [
-    { name: "Moffett Solar Array",        cat: "Solar farm",        lon: -122.058, lat: 37.402, tags: ["solar","farm","renewable","energy","panels"] },
-    { name: "Panoche Valley Solar",       cat: "Solar farm",        lon: -121.107, lat: 36.685, tags: ["solar","farm","renewable","energy","panels"] },
-    { name: "Coyote Valley Basin",        cat: "Flood-prone land",   lon: -121.775, lat: 37.20,  tags: ["flood","water","basin","risk","orchard","almond"] },
-    { name: "Pajaro River Orchards",      cat: "Flooded orchard",    lon: -121.744, lat: 36.898, tags: ["flood","orchard","almond","farm","water"] },
-    { name: "CZU Lightning Complex Scar", cat: "Wildfire burn scar", lon: -122.228, lat: 37.176, tags: ["wildfire","fire","burn","scar","forest"] },
-    { name: "Santa Cruz Mtns Fire Edge",  cat: "Wildfire burn scar", lon: -122.10,  lat: 37.20,  tags: ["wildfire","fire","burn","scar","forest"] },
-    { name: "Coyote Creek Subdivision",   cat: "New housing",        lon: -121.79,  lat: 37.31,  tags: ["housing","subdivision","residential","new","development"] },
-    { name: "Morgan Hill Infill",         cat: "New housing",        lon: -121.65,  lat: 37.13,  tags: ["housing","subdivision","residential","new","development"] },
-    { name: "Milpitas Logistics Park",    cat: "Warehouse expansion",lon: -121.907, lat: 37.428, tags: ["warehouse","logistics","industrial","expansion"] },
-    { name: "Livermore Vineyard Block",   cat: "Vineyard",           lon: -121.768, lat: 37.682, tags: ["vineyard","wine","grape","agriculture"] },
-    { name: "Coyote Hills Wetland",       cat: "Wetland restoration",lon: -122.098, lat: 37.556, tags: ["wetland","restoration","marsh","habitat"] },
-    { name: "Calaveras Reservoir",        cat: "Reservoir drawdown", lon: -121.822, lat: 37.484, tags: ["reservoir","drought","water","drawdown"] },
-    { name: "Almaden Quarry",             cat: "Quarry",             lon: -121.822, lat: 37.183, tags: ["quarry","mining","aggregate"] },
-    { name: "Altamont Wind Resource Area",cat: "Wind farm",          lon: -121.64,  lat: 37.72,  tags: ["wind","turbine","renewable","energy"] },
-  ];
-
-  function mockPredict(query){
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const scored = DEMO_SITES.map(site => {
-      let score = 0.12 + Math.random() * 0.08;
-      terms.forEach(t => {
-        if (site.name.toLowerCase().includes(t)) score += 0.32;
-        if (site.cat.toLowerCase().includes(t)) score += 0.30;
-        site.tags.forEach(tag => { if (tag.includes(t) || t.includes(tag)) score += 0.22; });
-      });
-      return { ...site, score: Math.min(0.98, score) };
-    }).sort((a, b) => b.score - a.score);
-    const strong = scored.filter(s => s.score > 0.4);
-    return (strong.length ? strong : scored.slice(0, 6)).slice(0, 8);
-  }
-
-  // Replace your geojsonToResults function with this safe version
   function geojsonToResults(gj){
     if (!gj || !gj.features) return [];
 
@@ -507,18 +519,24 @@
   async function runQuery(query){
     const q = (query ?? queryInput.value).trim();
     if (!q) return;
+    
     queryInput.value = q;
     runBtn.loading = true;
+    runBtn.disabled = true;
     resultsWrap.hidden = false;
-    resultsMeta.textContent = "Searching...";
+    resultsMeta.textContent = "Searching spatial database...";
     resultsList.innerHTML = "";
 
-    let results;
+    let results = [];
     try {
-      const resp = await fetch(`http://127.0.0.1:8000/api/predict`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q })
+      const resp = await fetch(`${API_BASE}/api/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+              query: q,
+              api_key: userApiKey
+          }),
+          signal: AbortSignal.timeout(600000) // 10 minute timeout for prediction execution
       });
 
       if (!resp.ok) {
@@ -527,36 +545,31 @@
       }
 
       const data = await resp.json();
-      console.log("Raw GeoJSON output from QueryEarth:", data); // Check your browser console to inspect!
-
       results = geojsonToResults(data);
       
       if (results.length === 0) {
-        console.warn("GeoDataFrame was returned empty by qe.predict()");
+        console.warn("GeoDataFrame was returned empty by qe.find()");
       }
     } catch (err) {
       console.error("API Prediction Failed! Reason:", err);
-      results = []; 
+      alert(`Query failed: ${err.message}`);
     }
 
     renderResults(q, results);
     runBtn.loading = false;
+    runBtn.disabled = false;
   }
 
-    runBtn.addEventListener("click", () => runQuery());
-    queryInput.addEventListener("keydown", (e) => {
+  runBtn.addEventListener("click", () => runQuery());
+  queryInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault(); // Prevents adding an unwanted newline on submit
+      e.preventDefault();
       runQuery();
     }
   });
 
-  // ---------------------------------------------------------------
-  // Kick everything off once the map view is ready
-  // ---------------------------------------------------------------
   mapEl.addEventListener("arcgisViewReadyChange", async () => {
     await setupMap();
-    bootQueryEarth();
   }, { once: true });
 </script>
 </body>
