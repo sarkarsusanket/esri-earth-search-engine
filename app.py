@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 # Ensure stdout flushes immediately so all prints appear in the terminal right away
 sys.stdout.reconfigure(line_buffering=True)
 
-sys.path.append(r"/home/susanket/esri-earth-search-engine/src")
+sys.path.append(r"./src/")
 import queryearth
 
 app = FastAPI(title="ESRI Earth Search Engine API")

@@ -31,8 +31,11 @@ def search_demographics(target: Optional[str],
         region_union = region.geometry.unary_union
         mask = demo_gdf.geometry.intersects(region_union)
         if mask.any():
-            candidates = demo_gdf[mask]
-            candidate_embeddings = ae_embeddings[mask.values]
+            mask_indices = np.where(mask)[0]
+            masked_gdf = demo_gdf.iloc[mask_indices].copy().reset_index(drop=True)
+            masked_embeddings = ae_embeddings[mask_indices]
+            candidates = gpd.clip(masked_gdf, region_union)
+            candidate_embeddings = masked_embeddings[candidates.index.to_numpy()]
         else:
             print("Demographic layer does not intersect the given region; searching globally instead.")
 

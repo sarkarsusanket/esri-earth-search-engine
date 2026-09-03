@@ -280,8 +280,6 @@ def search_osm(
             return res
 
     print(
-        f"OSM [{mode}] no keyword matches for {query!r}, returning all region"
-        " features as fallback."
+        f"OSM [{mode}] no keyword matches for {query!r}"
     )
-    res = _trim(gdf, region, score=1.0, extra_cols=extra)
-    return res if res is not None else empty_gdf()
+    return empty_gdf()

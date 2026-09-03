@@ -104,7 +104,7 @@ Available modes and what they contain:
                 'pressurized', 'fish_screen', 'spillway', 'vadi']
 
 - "buildings":  building footprints with optional amenity type and name
-                Categories: ['parking', 'library', 'toilets', 'pharmacy', 'bank', 'social_facility', 'police', 'grave_yard', 'place_of_worship', 'arts_centre', 'theatre', 'fast_food', 'community_centre', 'flight_school', 'clock', 'clinic', 'conference_centre', 'fuel', 'post_office', 'post_depot', 'social_centre', 'restaurant', 'courthouse', 'events_venue', 'fire_station', 'car_rental', 'doctors', 'casino', 'school', 'townhall', 'university', 'ranger_station', 'cinema', 'recycling', 'dentist', 'studio', 'mortuary', 'waste_transfer_station', 'car_wash', 'marketplace', 'cafe', 'childcare', 'commercial', 'nursing_home', 
+                Categories: ['library', 'toilets', 'pharmacy', 'bank', 'social_facility', 'police', 'grave_yard', 'place_of_worship', 'arts_centre', 'theatre', 'fast_food', 'community_centre', 'flight_school', 'clock', 'clinic', 'conference_centre', 'fuel', 'post_office', 'post_depot', 'social_centre', 'restaurant', 'courthouse', 'events_venue', 'fire_station', 'car_rental', 'doctors', 'casino', 'school', 'townhall', 'university', 'ranger_station', 'cinema', 'recycling', 'dentist', 'studio', 'mortuary', 'waste_transfer_station', 'car_wash', 'marketplace', 'cafe', 'childcare', 'commercial', 'nursing_home', 
                 'nightclub', 'fixme', 'motel', 'planetarium', 'research_institute', 'bar', 'pub', 'events_centre', 'ice_cream', 'dojo', 'amphitheatre', 'prison', 'mountain_rescue', 'money_transfer', 'veterinary', 'language_school', 'bicycle_rental', 'daycare', 'food_court', 'stripclub', 'love_hotel', 'dressing_room', 'locker', 'vehicle_inspection', 'hospital', 'concert_hall', 'bench', 'public_building', 'exhibition_centre', 'animal_shelter', 'college', 'shelter', 'kindergarten', 'music_school', 'training', 'music_venue', 'senior_center', 'spa', 'fuel;car_wash', 'art_school', 'fraternity', 'mausoleum', 'dancing_school', 'prep_school', 'cold_storage', 'public_facility', 'security_booth', 'bus_station', 'animal_boarding', 'social_club', 'art_gallery', 'bureau_de_change', 'canteen', 
                 'urgent_care', 'storage', 'ski_school', 'stroller_parking', 'bicycle_parking', 'clubhouse', 'ferry_terminal', 'assisted_living;skilled_nursing_facility', 'boat_storage', 'boat_rental', 'shower', 'first_aid', 'sign', 'parcel_locker', 'food', 'fountain', 'crematorium', 'water_slide', 'social_club;events_venue', 'mailroom', 'coworking_space', 'snack_stand', 'public', 'atm', 'amphitheater', 'laundry', 'museum', 'office', 'payment_terminal', 'waste_disposal', 'snack_cart', 'stage', 'bank;fire_station;fast_food', 'motorcycle_rental', 'water tank', 'monastery', 'doctors;school', 'biergarten', 'music_rehearsal_place', 
                 'mortuary;crematory', 'swingerclub', 'dive_centre', 'trade_school', 'sperm_bank', 'stable', 'meditation_centre', 'railway', 'vending_machine', 'karaoke_box', 'cruise_terminal', 'tattoo', 'framing', 'reception_desk', 'healthcare', 'antiques', 'public_bath', 'boat_sharing', 'open_air_stage', 'vacant', 'gambling', 'Casitas Del Sol', 'health_club', 'charging_station', 'kindergarden', 'security_control', 'information', 'laundry_room;mail_box;gym', 'wedding_chapel', 'orthodontist', 'parking_entrance', 'palmist', 'ski_rental', 'check_cashing', 'bbq', 'surface', 'event', 'towing', 'dispatch_center', 'coffee', 'ticket_booth', 'animal_training', 'convention_centre', 'apartment', 'event_hall', 'crypt', 'funeral_hall', 'field_shelter', 'sun_shelter', 'main theater', 
@@ -514,14 +514,14 @@ output = change-high(e, "buildings", "recent", "present", "new")
 --------------------------------------------------
 
 Query:
-"Find forests in California"
+"Find car parkings in Orange County"
 
 Plan:
-a = geocode("California")
-output = osm(a, "forest", "natural")
+a = geocode("Orange County")
+output = osm(a, "parking", "pois")
 
 Reason:
-Forests are structured natural feature data from OSM.
+You search for parking lots in pois in OSM.
 
 --------------------------------------------------
 
