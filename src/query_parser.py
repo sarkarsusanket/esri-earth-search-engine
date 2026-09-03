@@ -30,8 +30,11 @@ load_dotenv()
 
 import config
 
+# Module-scope client — reuses connection pooling across all router calls
+_genai_client = genai.Client()
+
 SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "osm", "change"}
-SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add"}
+SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add", "get_centroid"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
 SUPPORTED_TIME_PERIODS = set(config.VISION_YEARS.keys())
 SUPPORTED_CHANGE_MODES = {"new", "removed", "increased", "decreased"}
@@ -497,7 +500,7 @@ c = buffer(b, 8.04672)
 output = osm(c, "hospitals", "pois")
 
 Reason:
-Avoid interestcion unnscecary/extra tool call (as the fucntions already have a region command)
+Avoid interestcion unnscecary/extra tool call (as the fucntions already have a region command).
 
 --------------------------------------------------
 
@@ -656,6 +659,8 @@ change-high(region?, query, from_time, to_time, mode)
 
 buffer(region, km)
 
+get_centroid(region)
+
 intersection(a, b)
 
 union(a, b)
@@ -663,6 +668,34 @@ union(a, b)
 difference(a, b)
 
 add(a, b)
+
+==================================================
+GEOMETRIC REASONING AND TOOL LIMITATIONS
+==================================================
+
+Spatial tools operate on geometry types (points, lines, polygons). The results depend heavily on the geometry types of the input GeoDataFrames:
+
+1. INTERSECTING POINT GDFs: If you intersect two point GeoDataFrames, the result will be null unless points exactly coincide. Points have zero area, so their intersection is empty unless they are at the same location.
+
+2. BUFFERING POINTS: Buffering points yields polygons. If you buffer both point GDFs and then intersect, you will get polygon intersections, but the shapes may be weird or unexpected depending on buffer distances and point distributions.
+
+3. GEOMETRY TYPE CHOICE: The LLM is responsible for choosing appropriate geometry types based on the user's intent:
+   - For queries about "neighbourhoods", "areas", or "regions", polygons are usually appropriate
+   - For queries about "locations", "sites", or "points of interest", points (centroids) may be appropriate
+   - Either points or polygons can be acceptable depending on context
+
+4. USING get_centroid: Use get_centroid to convert polygon geometries to point geometries (centroids). This is useful when:
+   - You need point inputs for operations that require points
+   - You want to represent polygons as their central point
+   - You need to perform point-based operations on polygon results
+
+5. GEOMETRY CONVERSION STRATEGY: Before performing spatial operations, consider whether the geometry types are compatible:
+   - Point + Point intersection: likely null result
+   - Polygon + Polygon intersection: standard polygon overlap
+   - Point + Polygon intersection: points that fall within polygons
+   - Use get_centroid to convert polygons to points when needed
+
+The LLM must reason about geometry types and choose operations that will produce meaningful results for the user's query.
 
 ==================================================
 OSM MODES REFERENCE
@@ -707,6 +740,19 @@ Only use the functions listed above.
 
 Your primary objective is semantic correctness. Do not blindly choose POI simply because a concept has a POI category. Decide whether the user wants a known/listed place, a structured OSM category, or the physical thing visible in imagery, and use multiple modalities when the query genuinely requires them.
 """
+
+# Pre-create a cached content object for the system instruction so every
+# router call only sends the query payload, not the huge prompt prefix.
+# Falls back to per-request system_instruction if caching isn't available.
+_router_cache = None
+try:
+    _router_cache = _genai_client.caches.create(
+        model="gemini-3.1-flash-lite",
+        config={"system_instruction": ROUTER_SYSTEM_PROMPT, "ttl": "3600s"},
+    )
+    print(f"[router] System instruction cached: {_router_cache.name}")
+except Exception as e:
+    print(f"[router] Could not cache system instruction ({e}), falling back to per-request.")
 
 
 @dataclass
@@ -800,6 +846,7 @@ _FUNC_MAP = {
     "union": ("tool", None, "union"),
     "difference": ("tool", None, "difference"),
     "add": ("tool", None, "add"),
+    "get_centroid": ("tool", None, "get_centroid"),
 }
 
 # Accept both `=` and `:` as the assignment separator so a model writing
@@ -825,6 +872,7 @@ _FUZZ_MAX_ARGS = {
     ("change", "high"): 5,
     ("change", "low"): 5,
     ("tool", "buffer"): 2,
+    ("tool", "get_centroid"): 1,
 }
 
 
@@ -902,7 +950,7 @@ def _repair_token(token: str) -> str:
 
 
 def _classify_arg(token: str):
-    """Return ('text'|'number'|'var', value) for a single DSL argument, or
+    """Return ('text'|'number'|'var'|'null', value) for a single DSL argument, or
     None for junk that is neither a quoted string, a number, nor a bare
     identifier."""
     token = _repair_token(token)
@@ -918,6 +966,10 @@ def _classify_arg(token: str):
     if _NUMBER_RE.match(token):
         num = float(token)
         return ('number', int(num) if num.is_integer() else num)
+
+    # Treat None/null as a special null value, not a variable reference
+    if token.lower() in ('none', 'null'):
+        return ('null', None)
 
     if re.fullmatch(r'[A-Za-z_]\w*', token):
         return ('var', token)
@@ -1051,6 +1103,12 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         parameters["buffer_distance_km"] = number_args[0]
         inputs = var_args[:1]
 
+    elif operation == "tool" and tool_action == "get_centroid":
+        if len(var_args) != 1:
+            raise ValueError(f"get_centroid() needs exactly 1 variable argument: {line!r}")
+        parameters["target"] = "get_centroid"
+        inputs = var_args
+
     else:  # intersection / union / difference / add
         if len(var_args) != 2:
             raise ValueError(f"{func_name}() needs exactly 2 variable arguments: {line!r}")
@@ -1125,18 +1183,19 @@ def _fallback_plan(user_query: str) -> QueryPlan:
 # ------------------------------------------------------------------
 
 
-def router_lm(user_query:str):
-    
-    client = genai.Client()
-
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        config={
-            "system_instruction": ROUTER_SYSTEM_PROMPT
-        },
-        contents=f"QUERY: {user_query}"
-    )
-
+def router_lm(user_query: str):
+    if _router_cache is not None:
+        response = _genai_client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            config={"cached_content": _router_cache.name},
+            contents=f"QUERY: {user_query}",
+        )
+    else:
+        response = _genai_client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            config={"system_instruction": ROUTER_SYSTEM_PROMPT},
+            contents=f"QUERY: {user_query}",
+        )
     return response.text
 
 def parse_query(user_query: str) -> QueryPlan:

@@ -12,6 +12,7 @@ Use from_time="past", to_time="present" for long-term changes over 10 years.
 
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import geopandas as gpd
@@ -84,14 +85,12 @@ def change(
     query_vector = vision_encoder.encode_text(query)
     query_np = query_vector.squeeze(0).detach().cpu().numpy()
 
-    print(f"[{resolution}] Searching {from_time} ({from_year}) index...")
-    from_scores, from_lat, from_lon = from_index.search(
-        query_np, region=region, nprobe=nprobe, confidence_thresh=from_thresh
-    )
-    print(f"[{resolution}] Searching {to_time} ({to_year}) index...")
-    to_scores, to_lat, to_lon = to_index.search(
-        query_np, region=region, nprobe=nprobe, confidence_thresh=to_thresh
-    )
+    print(f"[{resolution}] Searching {from_time} ({from_year}) and {to_time} ({to_year}) indices in parallel...")
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        from_future = ex.submit(from_index.search, query_np, region=region, nprobe=nprobe, confidence_thresh=from_thresh)
+        to_future = ex.submit(to_index.search, query_np, region=region, nprobe=nprobe, confidence_thresh=to_thresh)
+        from_scores, from_lat, from_lon = from_future.result()
+        to_scores, to_lat, to_lon = to_future.result()
 
     if len(from_scores) == 0 and len(to_scores) == 0:
         print("[change] No results in either time period.")

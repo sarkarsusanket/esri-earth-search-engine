@@ -88,31 +88,41 @@ def _resolve_mode_and_query(
 
 
 def _category_hits(query: str, gdf: gpd.GeoDataFrame, category_col: str) -> List[str]:
-    """Find category tags that match any query token using root-stem comparison.
+    """Find category tags that match the query using exact compound term/subtag comparison.
 
     Handles `;` multi-value tags and `_`-separated class names.
     """
-    qtokens = _tokenize(query)
-    if not qtokens or category_col not in gdf.columns:
+    if category_col not in gdf.columns:
         return []
 
-    # Pre-stem query tokens
-    q_stems = {_stem(qt) for qt in qtokens}
+    # Sub-queries split by comma, normalized (e.g. "car_rental" -> "car rental")
+    sub_queries = [q.strip() for q in query.split(",") if q.strip()]
+    
+    # Generate query target terms (both raw normalized and stemmed)
+    target_terms = set()
+    for sq in sub_queries:
+        norm_sq = _normalize(sq)
+        target_terms.add(norm_sq)
+        # Apply stem to individual words in the query phrase (e.g. "car rentals" -> "car rental")
+        stemmed_sq = " ".join([_stem(w) for w in norm_sq.split()])
+        target_terms.add(stemmed_sq)
 
     hits = []
     unique_categories = gdf[category_col].dropna().astype(str).unique()
 
     for tag in unique_categories:
-        # Split multi-value and compound tag names like "motorway_link" or "fast_food"
-        subtags = [s for s in tag.replace("_", " ").split(";") if s.strip()]
-        cat_tokens = [
-            token for subtag in subtags for token in _tokenize(subtag)
-        ]
-        cat_stems = {_stem(ct) for ct in cat_tokens}
+        # Split multi-value tags like "bench;bicycle_parking" into individual category values
+        subtags = [s.strip() for s in tag.split(";") if s.strip()]
+        
+        for subtag in subtags:
+            # Normalize tag ("car_rental" -> "car rental")
+            norm_subtag = _normalize(subtag)
+            stemmed_subtag = " ".join([_stem(w) for w in norm_subtag.split()])
 
-        # Match if any stemmed query token overlaps with any stemmed category token
-        if not q_stems.isdisjoint(cat_stems):
-            hits.append(tag)
+            # Exact match against the full tag phrase or stemmed tag phrase
+            if norm_subtag in target_terms or stemmed_subtag in target_terms:
+                hits.append(tag)
+                break
 
     return hits
 

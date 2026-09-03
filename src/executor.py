@@ -149,6 +149,13 @@ class PipelineExecutor:
                 )
             return handler(inputs[0], step.parameters.get("buffer_distance_km"))
 
+        if action == "get_centroid":
+            if len(inputs) != 1:
+                raise ValueError(
+                    f"'get_centroid' expects exactly 1 input, got {len(inputs)} in step {step.step_id}."
+                )
+            return handler(inputs[0])
+
         if len(inputs) != 2:
             raise ValueError(
                 f"'{action}' expects exactly 2 inputs, got {len(inputs)} in step {step.step_id}."

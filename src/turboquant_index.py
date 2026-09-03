@@ -30,6 +30,8 @@ import numpy as np
 import torch
 import geopandas as gpd
 
+import config
+
 
 def unpack_bits_rows(packed_rows: np.ndarray, num_bits: int, d: int) -> torch.Tensor:
     """Inverse of build_turboquant_index.py's pack_bits_rows, for an arbitrary
@@ -60,10 +62,10 @@ class TurboQuantSearchIndex:
 
         self.rotation_matrix = torch.from_numpy(
             np.load(os.path.join(folder, "rotation_matrix.npy"))
-        ).float()
+        ).float().to(config.DEVICE)
         self.centroids = torch.from_numpy(
             np.load(os.path.join(folder, "centroids.npy"))
-        ).float()
+        ).float().to(config.DEVICE)
         self.cluster_offsets = np.load(os.path.join(folder, "cluster_offsets.npy"))
 
         # Memory-mapped: reading a subset of rows only pages in that subset,
@@ -89,14 +91,14 @@ class TurboQuantSearchIndex:
         signs_packed = np.ascontiguousarray(self.packed_signs[storage_rows])
         rs_q = np.ascontiguousarray(self.residual_scale_q[storage_rows])
 
-        codes = unpack_bits_rows(codes_packed, self.num_bits, self.dim).float()
-        signs_pm1 = unpack_bits_rows(signs_packed, 1, self.dim).float() * 2 - 1
-        residual_scale = torch.from_numpy(rs_q.astype(np.float32)) / 255.0 * self.residual_scale_max
+        codes = unpack_bits_rows(codes_packed, self.num_bits, self.dim).float().to(config.DEVICE)
+        signs_pm1 = unpack_bits_rows(signs_packed, 1, self.dim).float().to(config.DEVICE) * 2 - 1
+        residual_scale = (torch.from_numpy(rs_q.astype(np.float32)) / 255.0 * self.residual_scale_max).to(config.DEVICE)
 
-        q = rotated_query.view(1, -1)
+        q = rotated_query.to(config.DEVICE).view(1, -1)
         stage1 = self.scale * (codes @ q.T).squeeze(1) - self.clip_val * q.sum()
         stage2 = residual_scale * (signs_pm1 @ q.T).squeeze(1)
-        return (stage1 + stage2).numpy()
+        return (stage1 + stage2).cpu().numpy()
 
     def _spatial_candidates(self, region: gpd.GeoDataFrame) -> np.ndarray:
         """Bbox pre-filter (fast, vectorized) + exact polygon refine (on the
@@ -143,22 +145,20 @@ class TurboQuantSearchIndex:
             raw_scores = self._score_rows(candidate_rows, rotated_query)
             rows_pool = candidate_rows
         else:
-            centroid_sims = (rotated_query @ self.centroids.T).squeeze(0).numpy()
+            centroid_sims = (rotated_query @ self.centroids.T).squeeze(0).cpu().numpy()
             nprobe = min(nprobe, self.nlist)
             probe_clusters = np.argpartition(-centroid_sims, nprobe - 1)[:nprobe]
 
-            score_parts, row_parts = [], []
+            all_rows = []
             for c in probe_clusters:
                 lo, hi = int(self.cluster_offsets[c]), int(self.cluster_offsets[c + 1])
                 if hi == lo:
                     continue
-                rows = np.arange(lo, hi)
-                score_parts.append(self._score_rows(rows, rotated_query))
-                row_parts.append(rows)
-            if not score_parts:
+                all_rows.append(np.arange(lo, hi))
+            if not all_rows:
                 return np.empty(0), np.empty(0), np.empty(0)
-            raw_scores = np.concatenate(score_parts)
-            rows_pool = np.concatenate(row_parts)
+            rows_pool = np.concatenate(all_rows)
+            raw_scores = self._score_rows(rows_pool, rotated_query)
 
         if top_k: 
             k = min(top_k, len(raw_scores))
