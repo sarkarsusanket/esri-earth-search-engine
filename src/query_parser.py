@@ -30,9 +30,6 @@ load_dotenv()
 
 import config
 
-# Module-scope client — reuses connection pooling across all router calls
-_genai_client = genai.Client()
-
 SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "osm", "change"}
 SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add", "get_centroid"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
@@ -741,19 +738,6 @@ Only use the functions listed above.
 Your primary objective is semantic correctness. Do not blindly choose POI simply because a concept has a POI category. Decide whether the user wants a known/listed place, a structured OSM category, or the physical thing visible in imagery, and use multiple modalities when the query genuinely requires them.
 """
 
-# Pre-create a cached content object for the system instruction so every
-# router call only sends the query payload, not the huge prompt prefix.
-# Falls back to per-request system_instruction if caching isn't available.
-_router_cache = None
-try:
-    _router_cache = _genai_client.caches.create(
-        model="gemini-3.1-flash-lite",
-        config={"system_instruction": ROUTER_SYSTEM_PROMPT, "ttl": "3600s"},
-    )
-    print(f"[router] System instruction cached: {_router_cache.name}")
-except Exception as e:
-    print(f"[router] Could not cache system instruction ({e}), falling back to per-request.")
-
 
 @dataclass
 class PipelineStep:
@@ -1179,11 +1163,33 @@ def _fallback_plan(user_query: str) -> QueryPlan:
 
 
 # ------------------------------------------------------------------
-# Local GGUF router model (llama.cpp), loaded once and kept warm
+# Gemini router — lazy-initialized client + cached system instruction
 # ------------------------------------------------------------------
+
+_genai_client = None
+_router_cache = None
+
+
+def _ensure_genai():
+    """Lazily create the GenAI client and cache the system instruction.
+    Called on first router_lm() invocation, after the API key is in env."""
+    global _genai_client, _router_cache
+    if _genai_client is not None:
+        return
+    _genai_client = genai.Client()
+    try:
+        _router_cache = _genai_client.caches.create(
+            model="gemini-3.1-flash-lite",
+            config={"system_instruction": ROUTER_SYSTEM_PROMPT, "ttl": "3600s"},
+        )
+        print(f"[router] System instruction cached: {_router_cache.name}")
+    except Exception as e:
+        print(f"[router] Could not cache system instruction ({e}), falling back to per-request.")
+        _router_cache = None
 
 
 def router_lm(user_query: str):
+    _ensure_genai()
     if _router_cache is not None:
         response = _genai_client.models.generate_content(
             model="gemini-3.1-flash-lite",
