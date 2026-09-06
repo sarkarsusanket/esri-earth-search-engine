@@ -289,7 +289,23 @@ def search_osm(
                 print(f"OSM [{mode}] query {query!r} matched by name.")
             return res
 
-    print(
-        f"OSM [{mode}] no keyword matches for {query!r}"
-    )
+    # Fallback: if no matches in the requested mode, search POIs as well
+    if mode != "pois" and "pois" in osm_data and osm_data["pois"] is not None and not osm_data["pois"].empty:
+        print(f"OSM [{mode}] no keyword matches for {query!r}, falling back to POI search...")
+        pois_gdf = osm_data["pois"]
+        pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
+        pois_cand, pois_cat_hits = _keyword_search(query, pois_gdf, pois_cat_col, pois_has_name)
+        if pois_cand is not None:
+            pois_extra = [pois_cat_col]
+            if pois_has_name:
+                pois_extra.append("name")
+            res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)
+            if res is not None:
+                if pois_cat_hits:
+                    print(f"OSM [pois] fallback query {query!r} matched category(es): {pois_cat_hits[:10]}")
+                else:
+                    print(f"OSM [pois] fallback query {query!r} matched by name.")
+                return res
+
+    print(f"OSM [{mode}] no keyword matches for {query!r}")
     return empty_gdf()
