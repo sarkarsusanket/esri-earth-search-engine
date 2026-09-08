@@ -6,8 +6,74 @@ spatial operations over standard spatial schemas.
 """
 import pandas as pd
 import geopandas as gpd
+import shapely
 
 from schema import GEOMETRY_COL, CRS, empty_gdf, ensure_crs
+
+
+def shapely_overlay(
+    df1: gpd.GeoDataFrame, 
+    df2: gpd.GeoDataFrame, 
+    how: str = "intersection"
+) -> gpd.GeoDataFrame:
+    """Fast, robust overlay alternative to gpd.overlay.
+    
+    Handles mixed geometry types (Points, Lines, Polygons) without crashing.
+    Supported modes for `how`: 'intersection', 'difference', 'union', 
+    'symmetric_difference', 'identity'.
+    """
+    if df1.empty or df2.empty:
+        if how in ("intersection", "inner"):
+            return gpd.GeoDataFrame(columns=df1.columns, crs=df1.crs)
+        elif how == "difference":
+            return df1.copy()
+
+    operations = {
+        "intersection": shapely.intersection,
+        "difference": shapely.difference,
+        "union": shapely.union,
+        "symmetric_difference": shapely.symmetric_difference,
+    }
+    
+    how_op = "intersection" if how in ("intersection", "inner", "identity") else how
+    if how_op not in operations:
+        raise ValueError(f"Unsupported 'how' mode: {how}.")
+
+    geom_col = df1._geometry_column_name
+
+    # 1. Spatial Join to identify overlapping pairs
+    joined = gpd.sjoin(df1, df2, how="inner", predicate="intersects")
+
+    if not joined.empty:
+        # Extract corresponding geometries
+        geoms1 = joined.geometry.to_numpy()
+        
+        # FIX: Use .loc[] instead of .iloc[] because index_right holds index labels
+        geoms2 = df2.geometry.loc[joined["index_right"]].to_numpy()
+
+        # Execute vectorized C-level spatial operation
+        intersected_geoms = operations[how_op](geoms1, geoms2)
+
+        # Replace geometries and drop invalid/empty geometries
+        joined[geom_col] = intersected_geoms
+        joined = joined[~joined.geometry.is_empty & joined.geometry.notna()].copy()
+        joined = joined.drop(columns=["index_right"], errors="ignore")
+    else:
+        joined = gpd.GeoDataFrame(columns=df1.columns, crs=df1.crs)
+
+    # 2. Handle non-intersecting geometry portions for modes that require them
+    if how in ("difference", "identity") or (how == "intersection" and joined.empty):
+        unmatched_idx = df1.index.difference(
+            gpd.sjoin(df1[[geom_col]], df2[[df2._geometry_column_name]], how="inner", predicate="intersects").index
+        )
+        unmatched_df1 = df1.loc[unmatched_idx].copy()
+
+        if how in ("difference", "identity"):
+            joined = pd.concat([joined, unmatched_df1], ignore_index=True)
+            if not isinstance(joined, gpd.GeoDataFrame):
+                joined = gpd.GeoDataFrame(joined, crs=df1.crs, geometry=geom_col)
+
+    return joined
 
 
 def buffer(gdf: gpd.GeoDataFrame, distance_km: float) -> gpd.GeoDataFrame:
@@ -45,7 +111,7 @@ def union(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         return b.copy()
     if b.empty:
         return a.copy()
-    return gpd.overlay(a, b, how="union")
+    return shapely_overlay(a, b, how="union")
 
 
 def intersection(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -53,7 +119,7 @@ def intersection(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     a, b = ensure_crs(a), ensure_crs(b)
     if a.empty or b.empty:
         return empty_gdf()
-    return gpd.overlay(a, b, how="intersection")
+    return shapely_overlay(a, b, how="intersection")
 
 
 def difference(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -63,7 +129,7 @@ def difference(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         return empty_gdf()
     if b.empty:
         return a.copy()
-    return gpd.overlay(a, b, how="difference")
+    return shapely_overlay(a, b, how="difference")
 
 
 def add(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

@@ -538,6 +538,21 @@ Hospitals are OSM POI data; elderly residents is demographic.
 --------------------------------------------------
 
 Query:
+"Find police stations and hospitals in Phoenix"
+
+Plan:
+a = geocode("Phoenix")
+b = osm(a, "police", "pois")
+c = osm(a, "hospital", "pois")
+output = add(b, c)
+
+Reason:
+Here a add is required not a union, as you just wanna add them two not union, as no geometric op is required.
+
+--------------------------------------------------
+
+
+Query:
 "Find me places which used to be foests but now have buildings or residetials in LA."
 
 Plan:

@@ -8,10 +8,12 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 
+import shapely
 import geopandas as gpd
 import pandas as pd
 
 import config
+from operations.tool import shapely_overlay
 from schema import GEOMETRY_COL, SCORE_COL, empty_gdf, ensure_crs
 
 # Maps mode -> (parquet filename, category column, has_name_col)
@@ -195,7 +197,7 @@ def _trim(
     score: float,
     extra_cols: Optional[List[str]] = None,
 ) -> Optional[gpd.GeoDataFrame]:
-    """Fast spatial filter using spatial index (R-tree) and pipeline schema shaping."""
+    """Clips result geometries to their exact spatial intersection with region."""
     if result.empty:
         return None
 
@@ -203,28 +205,27 @@ def _trim(
         region_clean = ensure_crs(region)
         result = ensure_crs(result)
 
-        # Spatial Join using Spatial Index
-        result = gpd.sjoin(
+        # Overlay intersection trims/clips geometries and joins region columns
+        result = shapely_overlay(
             result,
-            region_clean[["geometry"]],
-            how="inner",
-            predicate="intersects",
+            region_clean,
+            how="intersection",
         )
-        if result.empty:
-            return None
-
-        # Clean up temporary sjoin index columns if created
-        result = result.drop(columns=["index_right"], errors="ignore")
 
     result = result.copy()
     result[SCORE_COL] = float(score)
 
     keep_cols = [GEOMETRY_COL, SCORE_COL]
+
+    # Preserve region attributes alongside extra_cols
+    if region is not None and not region.empty:
+        region_cols = [c for c in region.columns if c != region._geometry_column_name]
+        keep_cols.extend(c for c in region_cols if c in result.columns and c not in keep_cols)
+
     if extra_cols:
-        keep_cols.extend(c for c in extra_cols if c in result.columns)
+        keep_cols.extend(c for c in extra_cols if c in result.columns and c not in keep_cols)
 
     return ensure_crs(result[keep_cols])
-
 
 def load_osm_data(
     osm_dir: str = config.OSM_EMBEDDING_DIR,
@@ -254,15 +255,7 @@ def search_osm(
     osm_data: Dict[str, gpd.GeoDataFrame],
 ) -> gpd.GeoDataFrame:
     """Search OSM features by mode, term, and bounding region."""
-    if mode not in SUPPORTED_MODES:
-        print(
-            f"OSM search: unsupported mode '{mode}'. Must be one of"
-            f" {SUPPORTED_MODES}."
-        )
-        return empty_gdf()
-
-    if mode not in osm_data or osm_data[mode] is None or osm_data[mode].empty:
-        print(f"OSM search: no data loaded for mode '{mode}'.")
+    if mode not in SUPPORTED_MODES or mode not in osm_data or osm_data[mode] is None or osm_data[mode].empty:
         return empty_gdf()
 
     gdf = osm_data[mode]
@@ -272,40 +265,52 @@ def search_osm(
     if has_name:
         extra.append("name")
 
+    # OPTIMIZATION 1: Fast Spatial Pre-filtering using Spatial Index (sindex)
+    if region is not None and not region.empty:
+        region = ensure_crs(region)
+        gdf = ensure_crs(gdf)
+        
+        # Bounding box intersection is nearly instantaneous
+        possible_matches_idx = gdf.sindex.query(region.union_all(), predicate="intersects")
+        gdf = gdf.iloc[possible_matches_idx].copy()
+
+        if gdf.empty:
+            return empty_gdf()
+
+    # If no query provided, trim spatially filtered candidate set
     if not query:
         res = _trim(gdf, region, score=1.0, extra_cols=extra)
         return res if res is not None else empty_gdf()
 
+    # OPTIMIZATION 2: Run Keyword search ONLY on the spatially pre-filtered subset
     cand, cat_hits = _keyword_search(query, gdf, category_col, has_name)
     if cand is not None:
         res = _trim(cand, region, score=1.0, extra_cols=extra)
         if res is not None:
             if cat_hits:
-                print(
-                    f"OSM [{mode}] query {query!r} matched category(es):"
-                    f" {cat_hits[:10]}"
-                )
+                print(f"OSM [{mode}] query {query!r} matched category(es): {cat_hits[:10]}")
             else:
                 print(f"OSM [{mode}] query {query!r} matched by name.")
             return res
 
-    # Fallback: if no matches in the requested mode, search POIs as well
+    # Fallback POI search
     if mode != "pois" and "pois" in osm_data and osm_data["pois"] is not None and not osm_data["pois"].empty:
-        print(f"OSM [{mode}] no keyword matches for {query!r}, falling back to POI search...")
         pois_gdf = osm_data["pois"]
-        pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
-        pois_cand, pois_cat_hits = _keyword_search(query, pois_gdf, pois_cat_col, pois_has_name)
-        if pois_cand is not None:
-            pois_extra = [pois_cat_col]
-            if pois_has_name:
-                pois_extra.append("name")
-            res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)
-            if res is not None:
-                if pois_cat_hits:
-                    print(f"OSM [pois] fallback query {query!r} matched category(es): {pois_cat_hits[:10]}")
-                else:
-                    print(f"OSM [pois] fallback query {query!r} matched by name.")
-                return res
+        
+        if region is not None and not region.empty:
+            pois_gdf = ensure_crs(pois_gdf)
+            possible_pois = pois_gdf.sindex.query(region.union_all(), predicate="intersects")
+            pois_gdf = pois_gdf.iloc[possible_pois].copy()
 
-    print(f"OSM [{mode}] no keyword matches for {query!r}")
+        if not pois_gdf.empty:
+            pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
+            pois_cand, pois_cat_hits = _keyword_search(query, pois_gdf, pois_cat_col, pois_has_name)
+            if pois_cand is not None:
+                pois_extra = [pois_cat_col]
+                if pois_has_name:
+                    pois_extra.append("name")
+                res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)
+                if res is not None:
+                    return res
+
     return empty_gdf()
