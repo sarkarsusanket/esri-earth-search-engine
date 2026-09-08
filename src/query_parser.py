@@ -1192,6 +1192,17 @@ def _ensure_genai():
     if _genai_client is not None:
         return
     _genai_client = genai.Client()
+    _create_router_cache()
+
+
+def _create_router_cache():
+    """(Re)create the cached system instruction. The cache has a 1-hour TTL
+    (Google's minimum-billing-friendly window) — for a server that stays up
+    longer than that, the cached_content reference goes stale and Google's
+    API rejects it. Call this both on first init and again whenever a
+    cached-content request comes back with an error, so the cache silently
+    refreshes instead of taking every query down after an hour of uptime."""
+    global _router_cache
     try:
         _router_cache = _genai_client.caches.create(
             model="gemini-3.1-flash-lite",
@@ -1205,19 +1216,43 @@ def _ensure_genai():
 
 def router_lm(user_query: str):
     _ensure_genai()
-    if _router_cache is not None:
+
+    def _uncached_call():
+        return _genai_client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            config={"system_instruction": ROUTER_SYSTEM_PROMPT},
+            contents=f"QUERY: {user_query}",
+        )
+
+    if _router_cache is None:
+        return _uncached_call().text
+
+    try:
         response = _genai_client.models.generate_content(
             model="gemini-3.1-flash-lite",
             config={"cached_content": _router_cache.name},
             contents=f"QUERY: {user_query}",
         )
-    else:
-        response = _genai_client.models.generate_content(
-            model="gemini-3.1-flash-lite",
-            config={"system_instruction": ROUTER_SYSTEM_PROMPT},
-            contents=f"QUERY: {user_query}",
-        )
-    return response.text
+        return response.text
+    except Exception as e:
+        # Most likely cause: the cache's 1-hour TTL expired mid-session.
+        # Refresh it once and retry via the (now-fresh) cache; if that
+        # somehow fails too, fall through to an uncached call so this
+        # single query still succeeds rather than taking the whole router
+        # down until a restart.
+        print(f"[router] Cached-content call failed ({e}); refreshing cache and retrying.")
+        _create_router_cache()
+        if _router_cache is not None:
+            try:
+                response = _genai_client.models.generate_content(
+                    model="gemini-3.1-flash-lite",
+                    config={"cached_content": _router_cache.name},
+                    contents=f"QUERY: {user_query}",
+                )
+                return response.text
+            except Exception as e2:
+                print(f"[router] Retry with refreshed cache also failed ({e2}); falling back to uncached call.")
+        return _uncached_call().text
 
 def parse_query(user_query: str) -> QueryPlan:
     """Parse a natural-language geospatial query into an executable QueryPlan."""

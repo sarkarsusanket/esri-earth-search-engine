@@ -42,19 +42,20 @@ def shapely_overlay(
     geom_col = df1._geometry_column_name
 
     # 1. Spatial Join to identify overlapping pairs
-    joined = gpd.sjoin(df1, df2, how="inner", predicate="intersects")
+    joined_raw = gpd.sjoin(df1, df2, how="inner", predicate="intersects")
 
-    if not joined.empty:
+    if not joined_raw.empty:
         # Extract corresponding geometries
-        geoms1 = joined.geometry.to_numpy()
+        geoms1 = joined_raw.geometry.to_numpy()
         
         # FIX: Use .loc[] instead of .iloc[] because index_right holds index labels
-        geoms2 = df2.geometry.loc[joined["index_right"]].to_numpy()
+        geoms2 = df2.geometry.loc[joined_raw["index_right"]].to_numpy()
 
         # Execute vectorized C-level spatial operation
         intersected_geoms = operations[how_op](geoms1, geoms2)
 
         # Replace geometries and drop invalid/empty geometries
+        joined = joined_raw.copy()
         joined[geom_col] = intersected_geoms
         joined = joined[~joined.geometry.is_empty & joined.geometry.notna()].copy()
         joined = joined.drop(columns=["index_right"], errors="ignore")
@@ -63,9 +64,14 @@ def shapely_overlay(
 
     # 2. Handle non-intersecting geometry portions for modes that require them
     if how in ("difference", "identity") or (how == "intersection" and joined.empty):
-        unmatched_idx = df1.index.difference(
-            gpd.sjoin(df1[[geom_col]], df2[[df2._geometry_column_name]], how="inner", predicate="intersects").index
-        )
+        # Reuse the sjoin already computed above instead of re-running it —
+        # `joined_raw.index` (still df1's original index labels at this
+        # point, before any dedup/filtering) already tells us exactly which
+        # df1 rows had ANY match; a second `gpd.sjoin` call here was doing
+        # the identical spatial join twice for every difference/identity
+        # overlay.
+        matched_idx = joined_raw.index.unique()
+        unmatched_idx = df1.index.difference(matched_idx)
         unmatched_df1 = df1.loc[unmatched_idx].copy()
 
         if how in ("difference", "identity"):

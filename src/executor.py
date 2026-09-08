@@ -6,9 +6,27 @@ step against an in-memory variable table, resolving `inputs` references to
 prior steps' outputs as it goes. Every step's result is a GeoDataFrame in
 the standard schema, so tool operations can consume the output of *any*
 prior step regardless of which operation produced it.
+
+Steps run in dependency-topological LEVELS, not plan order: every step
+whose inputs are already resolved runs in the same level, concurrently, via
+a thread pool. Level N+1 only starts once level N has fully resolved.
+Independent branches — e.g. `demo(a, "elderly")`, `osm(a, "hospitals")`,
+`osm(a, "roads")` that only later get ANDed together via intersection — are
+extremely common in router-generated plans (see query_parser.py's few-shot
+examples) and cost `sum(branch latencies)` under strict sequential
+execution for no reason; running same-level steps concurrently turns that
+into `max(branch latencies)` per level. This is safe because steps within
+a level never depend on each other by construction (that's the definition
+of "same level"), each step only touches its own slice of `self.variables`
+by writing to its own `output_variable` key, and the heavy per-step work
+(GPU embedding search, geopandas spatial ops, `requests`-based geocoding)
+all releases the GIL during its actual C/CUDA compute, so threads offer
+real concurrency here despite the GIL — including full parallelism for
+independent network-bound geocode() calls.
 """
 
-from typing import Dict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List
 
 import geopandas as gpd
 
@@ -162,11 +180,55 @@ class PipelineExecutor:
             )
         return handler(inputs[0], inputs[1])
 
+    def _topological_levels(self, plan: QueryPlan) -> List[List[PipelineStep]]:
+        """Group steps into levels: level 0 has no unresolved dependencies,
+        level 1 depends only on level 0's outputs, etc. Steps within a level
+        are mutually independent by construction and can run concurrently."""
+        steps_by_var = {s.output_variable: s for s in plan.steps}
+        resolved = set()
+        remaining = list(plan.steps)
+        levels: List[List[PipelineStep]] = []
+
+        while remaining:
+            ready = [
+                s for s in remaining
+                if all(inp in resolved or inp not in steps_by_var for inp in s.inputs)
+            ]
+            if not ready:
+                # Shouldn't happen for a well-formed DAG (no cycles), but
+                # don't hang forever if the router ever produces one — run
+                # whatever's left in one level instead of looping forever.
+                ready = remaining
+
+            ready_ids = {s.step_id for s in ready}
+            levels.append(ready)
+            resolved.update(s.output_variable for s in ready)
+            remaining = [s for s in remaining if s.step_id not in ready_ids]
+
+        return levels
+
     def run_plan(self, plan: QueryPlan, verbose: bool = True) -> gpd.GeoDataFrame:
-        for step in plan.steps:
-            if verbose:
-                print(f"[step {step.step_id}] {step.operation}")
-            result = self.run_step(step)
-            if verbose:
-                print(f"  -> '{step.output_variable}': {len(result)} feature(s)")
+        levels = self._topological_levels(plan)
+        max_workers = max((len(level) for level in levels), default=1)
+
+        with ThreadPoolExecutor(max_workers=max(max_workers, 1)) as pool:
+            for level in levels:
+                if verbose:
+                    names = ", ".join(f"{s.step_id}:{s.operation}" for s in level)
+                    print(f"[level, {len(level)} step(s) in parallel] {names}")
+
+                if len(level) == 1:
+                    # No thread-pool overhead for the (very common) single-
+                    # step level.
+                    self.run_step(level[0])
+                else:
+                    futures = {pool.submit(self.run_step, s): s for s in level}
+                    for future in futures:
+                        future.result()  # re-raises any step's exception here
+
+                if verbose:
+                    for step in level:
+                        result = self.variables[step.output_variable]
+                        print(f"  -> '{step.output_variable}': {len(result)} feature(s)")
+
         return self.variables[plan.final_variable]

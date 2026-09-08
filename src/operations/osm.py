@@ -255,7 +255,15 @@ def search_osm(
     osm_data: Dict[str, gpd.GeoDataFrame],
 ) -> gpd.GeoDataFrame:
     """Search OSM features by mode, term, and bounding region."""
-    if mode not in SUPPORTED_MODES or mode not in osm_data or osm_data[mode] is None or osm_data[mode].empty:
+    if mode not in SUPPORTED_MODES:
+        print(
+            f"OSM search: unsupported mode '{mode}'. Must be one of"
+            f" {SUPPORTED_MODES}."
+        )
+        return empty_gdf()
+
+    if mode not in osm_data or osm_data[mode] is None or osm_data[mode].empty:
+        print(f"OSM search: no data loaded for mode '{mode}'.")
         return empty_gdf()
 
     gdf = osm_data[mode]
@@ -265,52 +273,61 @@ def search_osm(
     if has_name:
         extra.append("name")
 
-    # OPTIMIZATION 1: Fast Spatial Pre-filtering using Spatial Index (sindex)
-    if region is not None and not region.empty:
-        region = ensure_crs(region)
-        gdf = ensure_crs(gdf)
-        
-        # Bounding box intersection is nearly instantaneous
-        possible_matches_idx = gdf.sindex.query(region.union_all(), predicate="intersects")
-        gdf = gdf.iloc[possible_matches_idx].copy()
-
-        if gdf.empty:
-            return empty_gdf()
-
-    # If no query provided, trim spatially filtered candidate set
     if not query:
         res = _trim(gdf, region, score=1.0, extra_cols=extra)
         return res if res is not None else empty_gdf()
 
-    # OPTIMIZATION 2: Run Keyword search ONLY on the spatially pre-filtered subset
-    cand, cat_hits = _keyword_search(query, gdf, category_col, has_name)
+    # Spatially pre-filter to the region BEFORE keyword matching, not after.
+    # `_name_hits` runs a regex `.str.contains()` over every row's `name`
+    # field — for a country/global-scale "buildings" or "pois" table, that
+    # scan used to run on the FULL table even when the query only cares
+    # about one small region, with `_trim` only clipping to the region
+    # afterward. sindex.query() is a fast candidate lookup, so this shrinks
+    # the table the regex has to scan before doing any string work, rather
+    # than doing the string work first and throwing most of it away.
+    search_gdf = gdf
+    if region is not None and not region.empty:
+        region_union = region.geometry.unary_union
+        cand_idx = gdf.sindex.query(region_union, predicate="intersects")
+        if len(cand_idx) > 0:
+            search_gdf = gdf.iloc[cand_idx]
+        else:
+            search_gdf = gdf.iloc[[]]
+
+    cand, cat_hits = _keyword_search(query, search_gdf, category_col, has_name)
     if cand is not None:
         res = _trim(cand, region, score=1.0, extra_cols=extra)
         if res is not None:
             if cat_hits:
-                print(f"OSM [{mode}] query {query!r} matched category(es): {cat_hits[:10]}")
+                print(
+                    f"OSM [{mode}] query {query!r} matched category(es): {cat_hits[:10]}"
+                )
             else:
                 print(f"OSM [{mode}] query {query!r} matched by name.")
             return res
 
-    # Fallback POI search
+    # Fallback: if no matches in the requested mode, search POIs as well
     if mode != "pois" and "pois" in osm_data and osm_data["pois"] is not None and not osm_data["pois"].empty:
+        print(f"OSM [{mode}] no keyword matches for {query!r}, falling back to POI search...")
         pois_gdf = osm_data["pois"]
-        
+        pois_search_gdf = pois_gdf
         if region is not None and not region.empty:
-            pois_gdf = ensure_crs(pois_gdf)
-            possible_pois = pois_gdf.sindex.query(region.union_all(), predicate="intersects")
-            pois_gdf = pois_gdf.iloc[possible_pois].copy()
+            region_union = region.geometry.unary_union
+            pois_cand_idx = pois_gdf.sindex.query(region_union, predicate="intersects")
+            pois_search_gdf = pois_gdf.iloc[pois_cand_idx] if len(pois_cand_idx) > 0 else pois_gdf.iloc[[]]
+        pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
+        pois_cand, pois_cat_hits = _keyword_search(query, pois_search_gdf, pois_cat_col, pois_has_name)
+        if pois_cand is not None:
+            pois_extra = [pois_cat_col]
+            if pois_has_name:
+                pois_extra.append("name")
+            res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)
+            if res is not None:
+                if pois_cat_hits:
+                    print(f"OSM [pois] fallback query {query!r} matched category(es): {pois_cat_hits[:10]}")
+                else:
+                    print(f"OSM [pois] fallback query {query!r} matched by name.")
+                return res
 
-        if not pois_gdf.empty:
-            pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
-            pois_cand, pois_cat_hits = _keyword_search(query, pois_gdf, pois_cat_col, pois_has_name)
-            if pois_cand is not None:
-                pois_extra = [pois_cat_col]
-                if pois_has_name:
-                    pois_extra.append("name")
-                res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)
-                if res is not None:
-                    return res
-
+    print(f"OSM [{mode}] no keyword matches for {query!r}")
     return empty_gdf()
