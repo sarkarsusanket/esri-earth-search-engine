@@ -62,6 +62,14 @@ def change(
         print("No year-specific vision indices loaded.")
         return empty_gdf()
 
+    # Swap time periods for removed/decreased to reuse new/increased logic
+    if mode == "removed":
+        from_time, to_time = to_time, from_time
+        mode = "new"
+    elif mode == "decreased":
+        from_time, to_time = to_time, from_time
+        mode = "increased"
+
     from_year = config.VISION_YEARS[from_time]
     to_year = config.VISION_YEARS[to_time]
 
@@ -75,15 +83,15 @@ def change(
         print(f"No vision index for to_time='{to_time}' (year {to_year}, resolution '{resolution}').")
         return empty_gdf()
 
-    # --- Early index filtering using mode specific search bounds ---
-    # Passing confidence thresholds directly to the search index pre-filters candidates,
-    # drastically reducing the dataset size before k-d tree spatial matching.
-    from_thresh = 0.2 if mode in ("removed", "decreased") else None
-    to_thresh = 0.2 if mode in ("new", "increased") else None
-
     # --- Encode query and search both time periods ---
     query_vector = vision_encoder.encode_text(query)
     query_np = query_vector.squeeze(0).detach().cpu().numpy()
+
+    # --- Early index filtering using mode specific search bounds ---
+    # Passing confidence thresholds directly to the search index pre-filters candidates,
+    # drastically reducing the dataset size before k-d tree spatial matching.
+    from_thresh = 0.2 if mode == "increased" else None
+    to_thresh = 0.2 if mode == "new" else None
 
     print(f"[{resolution}] Searching {from_time} ({from_year}) and {to_time} ({to_year}) indices in parallel...")
     with ThreadPoolExecutor(max_workers=2) as ex:
@@ -150,17 +158,9 @@ def change(
         mask = (m_from_scores < 0.18) & (m_to_scores > 0.2)
         res_scores = minus_scores[mask]
         res_time = to_time
-    elif mode == "removed":
-        mask = (m_from_scores > 0.2) & (m_to_scores < 0.18)
-        res_scores = minus_scores[mask]
-        res_time = to_time
     elif mode == "increased":
         mask = (m_to_scores > m_from_scores) & ((m_to_scores - m_from_scores)>0.01) & (m_to_scores > 0.2)
         res_scores = minus_scores[mask]
-        res_time = f"{from_time}->{to_time}"
-    elif mode == "decreased":
-        mask = (m_to_scores < m_from_scores) & ((m_from_scores - m_to_scores)>0.01) & (m_from_scores > 0.2)
-        res_scores = m_from_scores[mask] - m_to_scores[mask]
         res_time = f"{from_time}->{to_time}"
     else:
         mask = np.zeros(len(to_idx), dtype=bool)

@@ -312,6 +312,7 @@ ROUTING RULES:
 - "red buildings" -> vision-high("red buildings") [visual appearance]
 - "swimming pools" -> vision-high("swimming pools") [visual detection]
 - "large parking lots" -> vision-low("large parking lots") [visual detection]
+- "parking lots" -> should be routed to both the vision-low and the pois.
 - "baseball fields" -> vision-high("baseball fields") [visual detection]
 - "wealthy neighborhoods" -> demo("wealthy neighborhoods") [demographic data]
 
@@ -333,7 +334,7 @@ Examples:
 
 - baseball fields -> vision-high (visual detection)
 - basketball courts -> vision-high (visual detection)
-- parking lots -> vision-low (visual detection)
+- parking lots -> vision-low (visual detection) + pois
 - swimming pools -> vision-high (visual detection)
 - golf courses -> vision-low (visual detection)
 - airports -> osm("airports", "pois")
@@ -360,7 +361,7 @@ Use POI when the user specifically wants listed/business places.
 -> demo + osm("hospitals", "pois").
 
 "Find large hospitals surrounded by parking lots"
--> osm("hospitals", "pois") for hospitals, and vision-low for parking lots.
+-> osm("hospitals", "pois") for hospitals, and osm("parking lots", "pois") for parking lots.
 
 When two modalities answer complementary parts of the same request, use both.
 
