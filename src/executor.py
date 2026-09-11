@@ -98,7 +98,6 @@ class PipelineExecutor:
             region = self._single_input(step)
             resolution = params.get("resolution")
             time_period = params.get("time")
-            # Resolve year-specific index if time is specified, else use default
             if time_period and time_period in config.VISION_YEARS:
                 year = config.VISION_YEARS[time_period]
                 turbo_index = self.context.vision_year_indices.get(year, {}).get(resolution)
@@ -129,7 +128,6 @@ class PipelineExecutor:
                 query=params.get("target"),
                 from_time=params.get("from_time"),
                 to_time=params.get("to_time"),
-                mode=params.get("mode"),
                 region=region,
                 vision_encoder=self.context.vision_encoder,
                 vision_year_indices=self.context.vision_year_indices,
@@ -144,12 +142,16 @@ class PipelineExecutor:
                 f"Unknown operation '{step.operation}' in step {step.step_id}."
             )
 
-        if result is not None and not result.empty and len(result) > config.MAX_RESULTS:
+        # Fallback to empty GeoDataFrame if operation returned None
+        if result is None:
+            result = gpd.GeoDataFrame()
+
+        if not result.empty and len(result) > config.MAX_RESULTS:
             result = result.head(config.MAX_RESULTS).copy()
 
         self.variables[step.output_variable] = result
         return result
-
+    
     def _run_tool_step(self, step: PipelineStep) -> gpd.GeoDataFrame:
         action = step.parameters.get("target")
         handler = TOOL_DISPATCH.get(action)

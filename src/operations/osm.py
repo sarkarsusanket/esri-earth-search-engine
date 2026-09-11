@@ -16,17 +16,38 @@ import config
 from operations.tool import shapely_overlay
 from schema import GEOMETRY_COL, SCORE_COL, empty_gdf, ensure_crs
 
-# Maps mode -> (parquet filename, category column, has_name_col)
+# Maps mode -> (parquet filename, primary category column, has_name_col)
 MODE_REGISTRY = {
     "roads": ("roads.parquet", "highway", False),
     "waterways": ("waterway.parquet", "waterway", False),
-    "buildings": ("buildings.parquet", "amenity", True),
     "landuse": ("landuse.parquet", "landuse", False),
-    "natural": ("natural.parquet", "natural", False),
     "pois": ("pois.parquet", "amenity", True),
 }
 
 SUPPORTED_MODES = set(MODE_REGISTRY.keys())
+
+
+def _category_cols_for(mode: str, gdf: gpd.GeoDataFrame) -> List[str]:
+    """Primary category column for `mode`, plus any secondary POI tag
+    columns (leisure, shop, tourism, ...) that are actually present in the
+    loaded data. Roads/waterways/landuse always get just their one fixed
+    column back.
+    """
+    _, primary_col, _ = MODE_REGISTRY[mode]
+    cols = [primary_col]
+    if mode == "pois":
+        cols.extend(c for c in POI_SECONDARY_CATEGORY_COLS if c in gdf.columns)
+    return cols
+
+
+# "pois" mode only ever checked `amenity`, but plenty of common POI queries
+# are tagged under a *different* OSM key entirely — parks are `leisure=park`,
+# not `amenity=park`. Searching only `amenity` meant those queries found no
+# category match and fell through to the much less reliable name search
+# (which is how "park" ended up matching "Parking Lot" by name). If your
+# pois.parquet has any of these columns, they get checked too. Confirm which
+# of these actually exist in your data with `inspect_unique_categories`.
+POI_SECONDARY_CATEGORY_COLS = ("leisure", "shop", "tourism", "office", "craft")
 
 
 def _stem(word: str) -> str:
@@ -41,7 +62,10 @@ def _stem(word: str) -> str:
         return word[:-3] + "y"
     if word.endswith(("shes", "ches", "sses", "boxes", "faxes")):
         return word[:-2]
-    if word.endswith("s") and not word.endswith("ss"):
+    # Guard against words that end in "-us" (bus, campus, focus, status) or
+    # "-ss" (glass) being treated as plurals. Only strip a bare trailing "s"
+    # when it's genuinely a plural marker.
+    if word.endswith("s") and not word.endswith(("ss", "us")):
         return word[:-1]
     return word
 
@@ -89,6 +113,48 @@ def _resolve_mode_and_query(
         return arg2_lower, arg1
 
 
+# Conservative, high-confidence synonyms for the "pois" (amenity) mode only.
+# These map common phrasing to the *actual* Geofabrik/OSM amenity tag before
+# we do the strict exact-match lookup below. Deliberately small: a wrong
+# synonym here silently returns the wrong category, so only add pairs you've
+# confirmed exist as real amenity values in your data (see
+# `inspect_unique_categories` below to check). NOT used for roads/waterways/
+# landuse, since those already use the fixed vocab from MODE_REGISTRY.
+POI_SYNONYMS = {
+    "gas station": "fuel",
+    "gas stations": "fuel",
+    "petrol station": "fuel",
+    "petrol stations": "fuel",
+    "grocery": "supermarket",
+    "grocery store": "supermarket",
+    "atm": "atm",
+    "cash machine": "atm",
+    "cash machines": "atm",
+    "drugstore": "pharmacy",
+    "drug store": "pharmacy",
+}
+
+
+def inspect_unique_categories(
+    osm_data: Dict[str, gpd.GeoDataFrame],
+) -> Dict[str, List[str]]:
+    """Print + return the actual unique category values present in each
+    loaded mode's data. Use this against your real Geofabrik parquet files
+    to build accurate alias/synonym tables instead of guessing — amenity
+    values in particular vary by extract/vendor.
+    """
+    out = {}
+    for mode, (_, category_col, _) in MODE_REGISTRY.items():
+        gdf = osm_data.get(mode)
+        if gdf is None or gdf.empty or category_col not in gdf.columns:
+            out[mode] = []
+            continue
+        vals = sorted(gdf[category_col].dropna().astype(str).unique().tolist())
+        out[mode] = vals
+        print(f"[{mode}] {category_col} ({len(vals)} unique): {vals[:50]}")
+    return out
+
+
 def _category_hits(query: str, gdf: gpd.GeoDataFrame, category_col: str) -> List[str]:
     """Find category tags that match the query using exact compound term/subtag comparison.
 
@@ -130,19 +196,34 @@ def _category_hits(query: str, gdf: gpd.GeoDataFrame, category_col: str) -> List
 
 
 def _name_hits(query: str, gdf: gpd.GeoDataFrame) -> List[int]:
-    """Vectorized row matching where name contains query tokens."""
+    """Vectorized row matching where name contains ALL query tokens (AND).
+
+    Previously this matched if the name contained ANY token, so a
+    two-word query like "bus parking" matched every row whose name
+    merely contained "parking" (or even "bus"), regardless of the
+    other word. Multi-token queries are almost always meant as a
+    single compound phrase intent, not a loose OR of keywords, so we
+    require every token (or its stem) to be found before a row counts
+    as a hit.
+    """
     qtokens = _tokenize(query)
     if not qtokens or "name" not in gdf.columns:
         return []
 
-    # Include original and stemmed tokens for regex matching
-    all_variants = list(
-        set(qtokens + [_stem(t) for t in qtokens if len(t) > 3])
-    )
-    pattern = "|".join([re.escape(t) for t in all_variants])
+    name_series = gdf["name"].fillna("").astype(str).str.lower()
+    mask = pd.Series(True, index=gdf.index)
 
-    name_series = gdf["name"].fillna("").astype(str)
-    mask = name_series.str.contains(pattern, case=False, regex=True)
+    for token in qtokens:
+        variants = {token}
+        if len(token) > 3:
+            variants.add(_stem(token))
+        # \b word-boundary is required here: without it, "park" as a plain
+        # substring matches inside "Parking Lot", "Parking Garage", etc.
+        # This is exactly why "find me parks" was returning parking lots.
+        pattern = "|".join(rf"\b{re.escape(v)}\b" for v in variants)
+        mask &= name_series.str.contains(pattern, case=False, regex=True, na=False)
+        if not mask.any():
+            return []
 
     return gdf.index[mask].tolist()
 
@@ -150,33 +231,47 @@ def _name_hits(query: str, gdf: gpd.GeoDataFrame) -> List[int]:
 def _keyword_search(
     query: str,
     gdf: gpd.GeoDataFrame,
-    category_col: str,
+    category_cols: List[str],
     has_name: bool,
 ) -> Tuple[Optional[gpd.GeoDataFrame], List[str]]:
-    """Keyword search across category and name fields with union matching."""
+    """Keyword search across one or more category columns plus name field.
+
+    category_cols is a list because a single "mode" (especially "pois") can
+    map to several distinct OSM tag keys — e.g. parks are `leisure=park`,
+    not `amenity=park`. Checking multiple columns means a query like "park"
+    gets a real category match instead of falling through to the much
+    looser name search.
+    """
     sub_queries = [q.strip() for q in query.split(",") if q.strip()]
 
-    all_cat_hits = []
+    all_cat_hits: Dict[str, List[str]] = {col: [] for col in category_cols}
     all_name_indices = []
 
     for sq in sub_queries:
         norm = _normalize(sq)
-        cat_hits = _category_hits(norm, gdf, category_col)
-        all_cat_hits.extend(cat_hits)
+
+        for col in category_cols:
+            # Amenity tags are open-vocabulary, so a small, conservative
+            # synonym table can resolve common phrasing ("gas station" ->
+            # "fuel") to the real tag before we do the strict exact-match
+            # lookup. Only applies to the amenity column.
+            cat_query = POI_SYNONYMS.get(norm, norm) if col == "amenity" else norm
+            all_cat_hits[col].extend(_category_hits(cat_query, gdf, col))
 
         if has_name:
-            name_idx = _name_hits(norm, gdf)
-            all_name_indices.extend(name_idx)
+            all_name_indices.extend(_name_hits(norm, gdf))
 
-    all_cat_hits = list(dict.fromkeys(all_cat_hits))
+    for col in all_cat_hits:
+        all_cat_hits[col] = list(dict.fromkeys(all_cat_hits[col]))
     all_name_indices = list(dict.fromkeys(all_name_indices))
 
-    # Combine Category and Name search results using logical OR
-    cat_mask = (
-        gdf[category_col].isin(all_cat_hits)
-        if all_cat_hits
-        else pd.Series(False, index=gdf.index)
-    )
+    cat_mask = pd.Series(False, index=gdf.index)
+    matched_pairs: List[str] = []
+    for col, hits in all_cat_hits.items():
+        if hits and col in gdf.columns:
+            cat_mask |= gdf[col].isin(hits)
+            matched_pairs.extend(f"{col}={v}" for v in hits)
+
     name_mask = (
         gdf.index.isin(all_name_indices)
         if all_name_indices
@@ -186,7 +281,7 @@ def _keyword_search(
     combined_mask = cat_mask | name_mask
 
     if combined_mask.any():
-        return gdf[combined_mask].copy(), all_cat_hits
+        return gdf[combined_mask].copy(), matched_pairs
 
     return None, []
 
@@ -268,8 +363,9 @@ def search_osm(
 
     gdf = osm_data[mode]
     filename, category_col, has_name = MODE_REGISTRY[mode]
+    category_cols = _category_cols_for(mode, gdf)
 
-    extra = [category_col]
+    extra = list(category_cols)
     if has_name:
         extra.append("name")
 
@@ -294,7 +390,7 @@ def search_osm(
         else:
             search_gdf = gdf.iloc[[]]
 
-    cand, cat_hits = _keyword_search(query, search_gdf, category_col, has_name)
+    cand, cat_hits = _keyword_search(query, search_gdf, category_cols, has_name)
     if cand is not None:
         res = _trim(cand, region, score=1.0, extra_cols=extra)
         if res is not None:
@@ -315,10 +411,11 @@ def search_osm(
             region_union = region.geometry.unary_union
             pois_cand_idx = pois_gdf.sindex.query(region_union, predicate="intersects")
             pois_search_gdf = pois_gdf.iloc[pois_cand_idx] if len(pois_cand_idx) > 0 else pois_gdf.iloc[[]]
-        pois_cat_col, pois_has_name = MODE_REGISTRY["pois"][1], MODE_REGISTRY["pois"][2]
-        pois_cand, pois_cat_hits = _keyword_search(query, pois_search_gdf, pois_cat_col, pois_has_name)
+        pois_has_name = MODE_REGISTRY["pois"][2]
+        pois_cat_cols = _category_cols_for("pois", pois_gdf)
+        pois_cand, pois_cat_hits = _keyword_search(query, pois_search_gdf, pois_cat_cols, pois_has_name)
         if pois_cand is not None:
-            pois_extra = [pois_cat_col]
+            pois_extra = list(pois_cat_cols)
             if pois_has_name:
                 pois_extra.append("name")
             res = _trim(pois_cand, region, score=1.0, extra_cols=pois_extra)

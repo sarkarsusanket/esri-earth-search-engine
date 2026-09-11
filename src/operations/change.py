@@ -2,12 +2,14 @@
 Change-detection search.
 
 Compares visual embeddings from two different time periods to find areas
-that have changed.  The user provides a query (e.g. "new buildings"),
-a from-time and to-time (past/recent/present mapping to 2014/2020/2026),
-and a mode (new/removed/increased/decreased).
+that have changed.  The user provides a query (e.g. "buildings"),
+a from-time and to-time (past/recent/present mapping to 2014/2020/2026).
 
 Use from_time="recent", to_time="present" for changes in the past 5 years.
 Use from_time="past", to_time="present" for long-term changes over 10 years.
+
+To detect "removed" features, swap the time periods (e.g., use
+from_time="present", to_time="past" instead of using a mode parameter).
 """
 
 from typing import Optional, Dict, List, Tuple
@@ -50,25 +52,19 @@ def change(
     query: str,
     from_time: str,
     to_time: str,
-    mode: str,
     region: Optional[gpd.GeoDataFrame] = None,
     vision_encoder=None,
     vision_year_indices: Optional[Dict[int, Dict[str, "TurboQuantSearchIndex"]]] = None,
     resolution: str = config.DEFAULT_RESOLUTION,
     nprobe: int = config.VISION_NPROBE_DEFAULT,
 ) -> gpd.GeoDataFrame:
-    """Detect change between *from_time* and *to_time* for *query*."""
+    """Detect new features that appear between *from_time* and *to_time* for *query*.
+    
+    To detect removed features, swap from_time and to_time.
+    """
     if vision_year_indices is None:
         print("No year-specific vision indices loaded.")
         return empty_gdf()
-
-    # Swap time periods for removed/decreased to reuse new/increased logic
-    if mode == "removed":
-        from_time, to_time = to_time, from_time
-        mode = "new"
-    elif mode == "decreased":
-        from_time, to_time = to_time, from_time
-        mode = "increased"
 
     from_year = config.VISION_YEARS[from_time]
     to_year = config.VISION_YEARS[to_time]
@@ -90,8 +86,8 @@ def change(
     # --- Early index filtering using mode specific search bounds ---
     # Passing confidence thresholds directly to the search index pre-filters candidates,
     # drastically reducing the dataset size before k-d tree spatial matching.
-    from_thresh = 0.2 if mode == "increased" else None
-    to_thresh = 0.2 if mode == "new" else None
+    from_thresh = 0.2
+    to_thresh = 0.2
 
     print(f"[{resolution}] Searching {from_time} ({from_year}) and {to_time} ({to_year}) indices in parallel...")
     with ThreadPoolExecutor(max_workers=2) as ex:
@@ -134,7 +130,7 @@ def change(
     to_idx, from_idx = _nearest_match_coords(from_coords, to_coords, config.CHANGE_DISTANCE_THRESHOLD)
 
     if len(to_idx) == 0:
-        print(f"[{resolution}] No '{mode}' changes detected.")
+        print(f"[{resolution}] No changes detected.")
         return empty_gdf()
 
     m_to_scores = to_scores[to_idx]
@@ -154,21 +150,13 @@ def change(
     # gdf_matched.to_file(rf"D:\Code\query-earth\results\to_matched_{to_time}_{to_year}.shp")
 
     # --- Vectorized Mode Filtering ---
-    if mode == "new":
-        mask = (m_from_scores < 0.18) & (m_to_scores > 0.2)
-        res_scores = minus_scores[mask]
-        res_time = to_time
-    elif mode == "increased":
-        mask = (m_to_scores > m_from_scores) & ((m_to_scores - m_from_scores)>0.01) & (m_to_scores > 0.2)
-        res_scores = minus_scores[mask]
-        res_time = f"{from_time}->{to_time}"
-    else:
-        mask = np.zeros(len(to_idx), dtype=bool)
-        res_scores = np.empty(0)
-        res_time = ""
+    # Detect "new" features: low confidence in from_time, high confidence in to_time
+    mask = (m_from_scores < 0.18) & (m_to_scores > 0.2)
+    res_scores = minus_scores[mask]
+    res_time = f"{from_time}->{to_time}"
 
     if not np.any(mask):
-        print(f"[{resolution}] No '{mode}' changes detected.")
+        print(f"[{resolution}] No changes detected.")
         return empty_gdf()
 
     matched_to_idx = to_idx[mask]
@@ -180,5 +168,5 @@ def change(
 
     gdf = from_geometries(list(result_points), scores=res_scores.tolist())
     gdf["time"] = res_time
-    print(f"[{resolution}] {mode}: {len(gdf)} change(s) detected.")
+    print(f"[{resolution}] Change: {len(gdf)} feature(s) detected.")
     return gdf

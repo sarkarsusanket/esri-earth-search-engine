@@ -94,9 +94,7 @@ OSM_EMBEDDING_DIR = rf"{EMBEDDINGS_DIR}/osm"
 OSM_YEARS = ["2014", "2026"]
 OSM_DEFAULT_YEAR = "2026"
 OSM_CATEGORY_FILES = [
-    'buildings.parquet',
     'landuse.parquet',
-    'natural.parquet',
     'pois.parquet',
     'roads.parquet',
     'waterway.parquet',

@@ -81,11 +81,9 @@ def _label_for(step: PipelineStep, artifacts_so_far: Dict[str, DisplayArtifact])
 
     if step.operation == "change":
         target = params.get("target") or "features"
-        verb = {
-            "new": "New", "removed": "Removed",
-            "increased": "Increased", "decreased": "Decreased",
-        }.get(params.get("mode"), "Changed")
-        return f"{verb} {target}"
+        from_time = params.get("from_time", "")
+        to_time = params.get("to_time", "")
+        return f"Changed {target} ({from_time} to {to_time})"
 
     if step.operation == "tool" and params.get("target") == "buffer":
         dist_km = params.get("buffer_distance_km") or 0

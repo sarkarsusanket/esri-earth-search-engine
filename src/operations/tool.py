@@ -96,6 +96,16 @@ def buffer(gdf: gpd.GeoDataFrame, distance_km: float) -> gpd.GeoDataFrame:
     buffered[GEOMETRY_COL] = metric.geometry.buffer(distance_km * 1000)
     return ensure_crs(buffered.to_crs(CRS))
 
+def add(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Concatenate two GeoDataFrames' rows together without spatial merging."""
+    a, b = ensure_crs(a), ensure_crs(b)
+    if a.empty:
+        return b.copy()
+    if b.empty:
+        return a.copy()
+    combined = pd.concat([a, b], ignore_index=True)
+    return gpd.GeoDataFrame(combined, geometry=GEOMETRY_COL, crs=CRS)
+
 
 def get_centroid(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Calculate and return the centroid for every geometry in `gdf`."""
@@ -112,12 +122,13 @@ def get_centroid(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def union(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Perform a spatial union overlay between two GeoDataFrames."""
-    a, b = ensure_crs(a), ensure_crs(b)
-    if a.empty:
-        return b.copy()
-    if b.empty:
-        return a.copy()
-    return shapely_overlay(a, b, how="union")
+    return add(a, b)
+    # a, b = ensure_crs(a), ensure_crs(b)
+    # if a.empty:
+    #     return b.copy()
+    # if b.empty:
+    #     return a.copy()
+    # return shapely_overlay(a, b, how="union")
 
 
 def intersection(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -136,17 +147,6 @@ def difference(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     if b.empty:
         return a.copy()
     return shapely_overlay(a, b, how="difference")
-
-
-def add(a: gpd.GeoDataFrame, b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Concatenate two GeoDataFrames' rows together without spatial merging."""
-    a, b = ensure_crs(a), ensure_crs(b)
-    if a.empty:
-        return b.copy()
-    if b.empty:
-        return a.copy()
-    combined = pd.concat([a, b], ignore_index=True)
-    return gpd.GeoDataFrame(combined, geometry=GEOMETRY_COL, crs=CRS)
 
 
 # Dispatch table used by the executor.
