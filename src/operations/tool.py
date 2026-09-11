@@ -28,9 +28,24 @@ def shapely_overlay(
         elif how == "difference":
             return df1.copy()
 
+    # Align CRSs if they differ
+    if df1.crs != df2.crs:
+        df2 = df2.to_crs(df1.crs)
+
+    geom_col = df1._geometry_column_name
+
+    # SPECIAL CASE: Difference operation
+    # Subtracting the unified overlay of df2 from df1 is vastly faster and avoids pairwise shape mismatches
+    if how == "difference":
+        df2_union = df2.geometry.unary_union
+        res_geoms = shapely.difference(df1.geometry.values, df2_union)
+        res_df = df1.copy()
+        res_df[geom_col] = res_geoms
+        res_df = res_df[~res_df.geometry.is_empty & res_df.geometry.notna()].copy()
+        return res_df
+
     operations = {
         "intersection": shapely.intersection,
-        "difference": shapely.difference,
         "union": shapely.union,
         "symmetric_difference": shapely.symmetric_difference,
     }
@@ -39,17 +54,16 @@ def shapely_overlay(
     if how_op not in operations:
         raise ValueError(f"Unsupported 'how' mode: {how}.")
 
-    geom_col = df1._geometry_column_name
-
     # 1. Spatial Join to identify overlapping pairs
     joined_raw = gpd.sjoin(df1, df2, how="inner", predicate="intersects")
 
     if not joined_raw.empty:
-        # Extract corresponding geometries
-        geoms1 = joined_raw.geometry.to_numpy()
+        # Extract corresponding geometries reliably using positional indexing (.iloc) via get_indexer
+        geoms1 = joined_raw.geometry.values
         
-        # FIX: Use .loc[] instead of .iloc[] because index_right holds index labels
-        geoms2 = df2.geometry.loc[joined_raw["index_right"]].to_numpy()
+        # Get positional indices of df2 for index_right labels to avoid length mismatch on duplicate index values
+        df2_pos_indices = df2.index.get_indexer(joined_raw["index_right"])
+        geoms2 = df2.geometry.values[df2_pos_indices]
 
         # Execute vectorized C-level spatial operation
         intersected_geoms = operations[how_op](geoms1, geoms2)
@@ -62,25 +76,17 @@ def shapely_overlay(
     else:
         joined = gpd.GeoDataFrame(columns=df1.columns, crs=df1.crs)
 
-    # 2. Handle non-intersecting geometry portions for modes that require them
-    if how in ("difference", "identity") or (how == "intersection" and joined.empty):
-        # Reuse the sjoin already computed above instead of re-running it —
-        # `joined_raw.index` (still df1's original index labels at this
-        # point, before any dedup/filtering) already tells us exactly which
-        # df1 rows had ANY match; a second `gpd.sjoin` call here was doing
-        # the identical spatial join twice for every difference/identity
-        # overlay.
+    # 2. Handle identity mode non-intersecting geometry portions
+    if how == "identity":
         matched_idx = joined_raw.index.unique()
         unmatched_idx = df1.index.difference(matched_idx)
         unmatched_df1 = df1.loc[unmatched_idx].copy()
 
-        if how in ("difference", "identity"):
-            joined = pd.concat([joined, unmatched_df1], ignore_index=True)
-            if not isinstance(joined, gpd.GeoDataFrame):
-                joined = gpd.GeoDataFrame(joined, crs=df1.crs, geometry=geom_col)
+        joined = pd.concat([joined, unmatched_df1], ignore_index=True)
+        if not isinstance(joined, gpd.GeoDataFrame):
+            joined = gpd.GeoDataFrame(joined, crs=df1.crs, geometry=geom_col)
 
     return joined
-
 
 def buffer(gdf: gpd.GeoDataFrame, distance_km: float) -> gpd.GeoDataFrame:
     """Buffer every geometry in `gdf` outward by `distance_km` kilometers."""

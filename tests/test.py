@@ -8,7 +8,9 @@ Live reload test harness.
 
 Weights/parquets/indices stay in memory. Only Python modules get reloaded.
 """
-import sys, importlib, time
+import sys, importlib, time, dotenv
+
+dotenv.load_dotenv()
 
 sys.path.insert(0, "./src")
 sys.stdout.reconfigure(line_buffering=True)
@@ -25,7 +27,7 @@ MODULE_NAMES = [
 # 1. First-time heavy load
 # ------------------------------------------------------------------
 print("=" * 60)
-print("Loading heavy assets (this only happens once)...")
+print("Loading heavy assets...")
 print("=" * 60)
 
 import queryearth as _qe_mod
@@ -54,6 +56,8 @@ def reload():
     """Reload all src/ modules without touching the loaded assets."""
     reloaded = []
     failed = []
+
+    # Reload dependencies first, then high-level modules
     for name in MODULE_NAMES:
         mod = sys.modules.get(name)
         if mod is None:
@@ -64,14 +68,17 @@ def reload():
         except Exception as e:
             failed.append((name, str(e)))
 
-    # Re-patch the engine's executor so it uses the fresh modules
-    from executor import PipelineExecutor
-    qe.executor = PipelineExecutor(qe.context)
+    # Re-import updated classes
+    import executor as _exec_mod
+    import queryearth as _qe_mod
+
+    # Re-instantiate executor with the updated class definition
+    qe.executor = _exec_mod.PipelineExecutor(qe.context)
 
     print(f"Reloaded {len(reloaded)} modules.")
     if failed:
         for name, err in failed:
-            print(f"  FAILED: {name} -> {err}")
+            print(f"   FAILED: {name} -> {err}")
     return reloaded
 
 
@@ -79,10 +86,7 @@ def test(query, mode=None):
     """Run a query through the engine."""
     begin = time.time()
     if mode:
-        # For change queries, inject mode into the plan
-        plan = qe.executor.context  # just to verify engine is alive
         from query_parser import parse_query
-        # parse_query returns a plan; we'll set mode on any change steps
         raw_plan = parse_query(query)
         for step in raw_plan.steps:
             if step.operation == "change":
@@ -93,3 +97,8 @@ def test(query, mode=None):
     elapsed = time.time() - begin
     print(f"Done in {elapsed:.2f}s. {len(result_gdf)} feature(s) returned.")
     return result_gdf
+
+
+# Drop into interactive REPL so reload() and test() stay available
+import code
+code.interact(banner="", exitmsg="", local=dict(globals(), **locals()))

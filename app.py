@@ -90,11 +90,20 @@ async def api_predict(req: QueryRequest):
             print("[WARN] GeoDataFrame returned by engine.find_with_context() is empty.", flush=True)
             return {"type": "FeatureCollection", "features": [], "bundle": None}
 
-        geojson_data = json.loads(gdf.to_json())
-        serialized_bundle = artifacts_module.serialize_bundle(bundle)
-        print(f"[SUCCESS] Returning {len(geojson_data.get('features', []))} GeoJSON features + bundle to frontend.", flush=True)
-        return {"type": "FeatureCollection", "features": geojson_data.get("features", []), "bundle": serialized_bundle}
+        # Deduplicate column names if any duplicates exist
+        if gdf.columns.has_duplicates:
+            cols = pd.Series(gdf.columns)
+            for dup in cols[cols.duplicated()].unique():
+                cols[cols == dup] = [f"{dup}_{i}" if i > 0 else dup for i in range((cols == dup).sum())]
+            gdf.columns = cols
 
+        # Convert directly to GeoJSON dict safely without double-serialization
+        geojson_dict = gdf.to_geo_dict()
+        serialized_bundle = artifacts_module.serialize_bundle(bundle)
+        
+        features = geojson_dict.get("features", [])
+        print(f"[SUCCESS] Returning {len(features)} GeoJSON features + bundle to frontend.", flush=True)
+        return {"type": "FeatureCollection", "features": features, "bundle": serialized_bundle}
     except Exception as e:
         print(f"[ERROR] Exception during query prediction: {e}", flush=True)
         import traceback
