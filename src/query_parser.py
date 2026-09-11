@@ -34,6 +34,7 @@ SUPPORTED_OPERATIONS = {"geocode", "demo", "vision", "tool", "osm", "change"}
 SUPPORTED_TOOL_ACTIONS = {"buffer", "union", "intersection", "difference", "add", "get_centroid"}
 SUPPORTED_RESOLUTIONS = set(config.VISION_INDEX_DIRS.keys())
 SUPPORTED_TIME_PERIODS = set(config.VISION_YEARS.keys())
+SUPPORTED_CHANGE_MODES = {"new", "removed"}
 
 ROUTER_SYSTEM_PROMPT = """
 You are the QueryEarth geospatial query planner.
@@ -189,14 +190,20 @@ Use the time parameter only when the user explicitly asks about a specific time 
 
 --------------------------------------------------
 
-7. change-low(region?, query, from_time, to_time)
+7. change-low(region?, query, from_time, to_time, mode?)
 
 Detect changes in LARGE physical features and land-use patterns between two
 time periods, using lower-resolution imagery.
 
 Arguments:
+- query: 1 or 2 queries (comma-separated like "forests,buildings" or separate strings)
+  - 1 query: searches for that query in both time periods
+  - 2 queries: searches for first query in from_time, second in to_time
 - from_time: one of "past" (2014), "recent" (2020), "present" (2026)
 - to_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- mode (optional): "new" (default) or "removed"
+  - "new": finds features that APPEARED (not in from_time, but in to_time)
+  - "removed": finds features that DISAPPEARED (in from_time, but not in to_time)
 
 Use change-low when detecting change in LARGE features such as:
 - forests cleared or new farmland
@@ -212,21 +219,28 @@ Think:
 by comparing two aerial images?"
 
 Examples:
-- "Where were forests cleared between 2014 and 2026?"
-- "What areas became urbanized from recent to present?"
-- "Find new large parking lots since 2014"
-- "Where has farmland increased from past to recent?"
+- "Where were forests cleared between 2014 and 2026?" -> change-low("forests", "past", "present", "removed")
+- "What areas became urbanized from recent to present?" -> change-low("urban", "recent", "present", "new")
+- "Find new large parking lots since 2014" -> change-low("parking lots", "past", "present", "new")
+- "Where has farmland increased from past to recent?" -> change-low("farmland", "past", "recent", "new")
+- "Find places where forest was replaced by buildings" -> change-low("forests,buildings", "past", "present")
 
 --------------------------------------------------
 
-8. change-high(region?, query, from_time, to_time)
+8. change-high(region?, query, from_time, to_time, mode?)
 
 Detect changes in SMALLER, FINE-GRAINED visual features between two
 time periods, using high-resolution imagery.
 
 Arguments:
+- query: 1 or 2 queries (comma-separated like "forests,buildings" or separate strings)
+  - 1 query: searches for that query in both time periods
+  - 2 queries: searches for first query in from_time, second in to_time
 - from_time: one of "past" (2014), "recent" (2020), "present" (2026)
 - to_time: one of "past" (2014), "recent" (2020), "present" (2026)
+- mode (optional): "new" (default) or "removed"
+  - "new": finds features that APPEARED (not in from_time, but in to_time)
+  - "removed": finds features that DISAPPEARED (in from_time, but not in to_time)
 
 Use change-high when detecting change in SMALL features such as:
 - new swimming pools
@@ -245,6 +259,7 @@ Examples:
 - "Find new solar panels since 2014 (past)"
 - "What buildings were constructed from recent to present?"
 - "Where have rooftops changed between past and present?"
+- "Find places where small structures replaced gardens" -> change-high("gardens,structures", "past", "present")
 
 --------------------------------------------------
 
@@ -532,19 +547,8 @@ Query:
 
 Plan:
 a = geocode("Los Angeles")
-b = vision-high(a, "forests", "past")
-c = buffer(b, 0.2)
-d = vision-high(a, "buildings", "present")
-e = buffer(d, 0.2)
-output = intersection(b, d)
-
-Reason:
-We didn't go the change detection path here because change detection will only allow us to detect changes of 
-a particular entity. But here the user wanted the difference of places, the places which went from forest to 
-buildings. So we utilize the year functionality of Vision High to first search the forests in past years and 
-buildings in present years and notice how we do a buffer of 0.2 because 200 meter is the resolution of the 
-Vision High imagery, and then we find out the intersection between the two C and E. There will be user queries 
-which will be complicated and which needs some thoughts like this.
+b = change-high(a, "forests,buildings", "past", "present")
+output = b
 
 --------------------------------------------------
 
@@ -562,7 +566,7 @@ Query:
 "Find areas where forest cover has decreased over this decade"
 
 Plan:
-a = change-high("forests", "present", "past")
+a = change-high("forests", "present", "past", "removed")
 output = a
 
 Reason:
@@ -651,9 +655,9 @@ vision-high(region?, query, time?)
 
 vision-low(region?, query, time?)
 
-change-low(region?, query, from_time, to_time)
+change-low(region?, query, from_time, to_time, mode?)
 
-change-high(region?, query, from_time, to_time)
+change-high(region?, query, from_time, to_time, mode?)
 
 buffer(region, km)
 
@@ -773,6 +777,7 @@ class PipelineStep:
             self.parameters["resolution"] = resolution
             from_time = self.parameters.get("from_time")
             to_time = self.parameters.get("to_time")
+            mode = self.parameters.get("mode", "new")
             if from_time not in SUPPORTED_TIME_PERIODS:
                 raise ValueError(
                     f"Unsupported from_time '{from_time}' in step {self.step_id}. "
@@ -782,6 +787,11 @@ class PipelineStep:
                 raise ValueError(
                     f"Unsupported to_time '{to_time}' in step {self.step_id}. "
                     f"Must be one of {SUPPORTED_TIME_PERIODS}."
+                )
+            if mode not in SUPPORTED_CHANGE_MODES:
+                raise ValueError(
+                    f"Unsupported change mode '{mode}' in step {self.step_id}. "
+                    f"Must be one of {SUPPORTED_CHANGE_MODES}."
                 )
 
 
@@ -845,9 +855,9 @@ _FUZZ_MAX_ARGS = {
     ("demo", None): 2,
     ("osm", None): 4,
     ("vision", None): 3,
-    ("change", None): 4,
-    ("change", "high"): 4,
-    ("change", "low"): 4,
+    ("change", None): 6,
+    ("change", "high"): 6,
+    ("change", "low"): 6,
     ("tool", "buffer"): 2,
     ("tool", "get_centroid"): 1,
 }
@@ -993,18 +1003,53 @@ def _parse_dsl_line(line: str, step_id: int) -> PipelineStep:
         inputs = []
 
     elif operation == "change":
-        # change(region?, query, from_time, to_time)
-        # The LLM may quote time ("past", "present") so they land in
+        # change(region?, query, from_time, to_time, mode?) or
+        # change(region?, query1, query2, from_time, to_time, mode?)
+        # The LLM may quote time/mode ("past", "present", "new", "removed") so they land in
         # text_args, or leave them bare so they land in var_args.
-        # Strategy: pull region from var_args (if any), then consume the
-        # remaining text_args as query + from_time + to_time.
+        # Strategy: pull region from var_args (if any), then find the
+        # time periods and mode from text_args, and use remaining text_args as query/queries.
         if len(text_args) < 3:
             raise ValueError(
                 f"change() needs query, from_time, to_time as strings: {line!r}"
             )
-        parameters["target"] = text_args[0]
-        parameters["from_time"] = text_args[1]
-        parameters["to_time"] = text_args[2]
+        
+        # Find which text_args are time periods or mode
+        time_args = [i for i, arg in enumerate(text_args) if arg.lower() in SUPPORTED_TIME_PERIODS]
+        mode_args = [i for i, arg in enumerate(text_args) if arg.lower() in SUPPORTED_CHANGE_MODES]
+        
+        if len(time_args) < 2:
+            raise ValueError(
+                f"change() needs at least 2 time period arguments (from_time, to_time): {line!r}"
+            )
+        
+        # The last two time args are from_time and to_time
+        from_time_idx = time_args[-2]
+        to_time_idx = time_args[-1]
+        
+        # Mode is optional, defaults to "new"
+        if mode_args:
+            mode_idx = mode_args[0]
+            parameters["mode"] = text_args[mode_idx].lower()
+        else:
+            parameters["mode"] = "new"
+        
+        # Everything before from_time_idx is query(s)
+        query_args = text_args[:from_time_idx]
+        
+        if len(query_args) == 0:
+            raise ValueError(
+                f"change() needs at least one query string: {line!r}"
+            )
+        elif len(query_args) == 1:
+            # Single query - check for comma separation
+            parameters["target"] = query_args[0]
+        else:
+            # Multiple queries - join with comma for the parser
+            parameters["target"] = ",".join(query_args)
+        
+        parameters["from_time"] = text_args[from_time_idx]
+        parameters["to_time"] = text_args[to_time_idx]
         inputs = var_args[:1] if var_args else []
 
     elif operation == "demo":

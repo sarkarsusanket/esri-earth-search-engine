@@ -128,6 +128,7 @@ class PipelineExecutor:
                 query=params.get("target"),
                 from_time=params.get("from_time"),
                 to_time=params.get("to_time"),
+                mode=params.get("mode", "new"),
                 region=region,
                 vision_encoder=self.context.vision_encoder,
                 vision_year_indices=self.context.vision_year_indices,
