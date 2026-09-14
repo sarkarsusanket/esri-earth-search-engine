@@ -105,3 +105,4 @@ OSM_CATEGORY_FILES = [
 # ------------------------------------------------------------------
 VISION_NPROBE_DEFAULT = 24  # IVF clusters probed per global (non-spatially-filtered) vision search
 MAX_RESULTS = 500  # Maximum features any single step can return
+AUTOMATIC_BUFFER_RADIUS = 1

@@ -38,6 +38,7 @@ from operations import vision as vision_op
 from operations import osm as osm_op
 from operations import change as change_op
 from operations.tool import TOOL_DISPATCH
+from schema import buffer_points_if_needed
 
 
 class PipelineContext:
@@ -85,6 +86,8 @@ class PipelineExecutor:
 
         elif step.operation == "demo":
             region = self._single_input(step)
+            if region is not None:
+                region = buffer_points_if_needed(region)
             result = demo_op.search_demographics(
                 target=params.get("target"),
                 region=region,
@@ -96,6 +99,8 @@ class PipelineExecutor:
 
         elif step.operation == "vision":
             region = self._single_input(step)
+            if region is not None:
+                region = buffer_points_if_needed(region)
             resolution = params.get("resolution")
             time_period = params.get("time")
             if time_period and time_period in config.VISION_YEARS:
@@ -114,6 +119,8 @@ class PipelineExecutor:
 
         elif step.operation == "osm":
             region = self._single_input(step)
+            if region is not None:
+                region = buffer_points_if_needed(region)
             result = osm_op.search_osm(
                 mode=params.get("osm_mode"),
                 query=params.get("target"),
@@ -123,6 +130,8 @@ class PipelineExecutor:
 
         elif step.operation == "change":
             region = self._single_input(step)
+            if region is not None:
+                region = buffer_points_if_needed(region)
             resolution = params.get("resolution")
             result = change_op.change(
                 query=params.get("target"),
