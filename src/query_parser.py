@@ -661,7 +661,7 @@ Query:
 "Find illegal-looking new construction inside protected wildlife areas."
 
 Plan:
-a = osm("forests,protected area,conservation", "landuse")
+a = vision-low("forests")
 c = change-high(a, "construction", "past", "present", "new")
 d = buffer(c, 8.04672)
 e = vision-high(d, "illegal construction")

@@ -156,9 +156,6 @@ class PipelineExecutor:
         if result is None:
             result = gpd.GeoDataFrame()
 
-        if not result.empty and len(result) > config.MAX_RESULTS:
-            result = result.head(config.MAX_RESULTS).copy()
-
         self.variables[step.output_variable] = result
         return result
     
@@ -243,4 +240,7 @@ class PipelineExecutor:
                         result = self.variables[step.output_variable]
                         print(f"  -> '{step.output_variable}': {len(result)} feature(s)")
 
-        return self.variables[plan.final_variable]
+        final_result = self.variables[plan.final_variable]
+        if not final_result.empty and len(final_result) > config.MAX_RESULTS:
+            final_result = final_result.head(config.MAX_RESULTS).copy()
+        return final_result
