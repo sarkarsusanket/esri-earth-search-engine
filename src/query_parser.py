@@ -103,7 +103,7 @@ Available modes and what they contain:
                 Options: ['waterfall', 'dam','stream','canal','river','artificial']
 
 - "landuse":    land-use classifications
-                the available classes to search from: ['industrial', 'construction', 'commercial', 'residential', 'military']
+                the available classes to search from: ['industrial', 'construction', 'commercial', 'residential', 'military', "conservation"]
 
 - "pois":       points of interest with amenity type and name
                 Category examples: (restaurant, school, hospital, bank, etc.) You could search and find out ig.
@@ -474,6 +474,22 @@ output = osm(a, "rivers", "waterways")
 
 Reason:
 Rivers are structured waterway data from OSM.
+
+--------------------------------------------------
+
+Query:
+"Find illegal-looking new construction inside protected wildlife areas."
+
+Plan:
+a = vision-low("wildlife and forests")
+b = buffer(a, 50)
+c = change-high(b, "construction", "past", "present", "new")
+d = buffer(c, 8.04672)
+e = vision-high(d, "illegal construction")
+output = e
+
+Reason:
+Pay importance to the attributes, and the hacky ways in which you can refine change detect outputs (like done here with the whole buffereing and then viswion high)
 
 --------------------------------------------------
 
