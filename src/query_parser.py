@@ -481,9 +481,8 @@ Query:
 "Find illegal-looking new construction inside protected wildlife areas."
 
 Plan:
-a = vision-low("wildlife and forests")
-b = buffer(a, 50)
-c = change-high(b, "construction", "past", "present", "new")
+a = osm("forests,protected area,conservation", "landuse")
+c = change-high(a, "construction", "past", "present", "new")
 d = buffer(c, 8.04672)
 e = vision-high(d, "illegal construction")
 output = e
@@ -655,6 +654,22 @@ i = difference(c, h)
 j = intersection(i, e)
 k = intersection(j, g)
 output = vision-high(k, "rooftop solar panels")
+
+--------------------------------------------------
+
+Query:
+"Find illegal-looking new construction inside protected wildlife areas."
+
+Plan:
+a = osm("forests,protected area,conservation", "landuse")
+c = change-high(a, "construction", "past", "present", "new")
+d = buffer(c, 8.04672)
+e = vision-high(d, "illegal construction")
+output = e
+
+Reason:
+Pay importance to the attributes, and the hacky ways in which you can refine change detect outputs (like done here with the whole buffereing and then viswion high)
+
 
 
 ==================================================

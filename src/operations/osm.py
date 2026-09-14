@@ -243,6 +243,7 @@ def _keyword_search(
     looser name search.
     """
     sub_queries = [q.strip() for q in query.split(",") if q.strip()]
+    if query == "conservation": sub_queries = ['protected area', 'forest', 'conservation']
 
     all_cat_hits: Dict[str, List[str]] = {col: [] for col in category_cols}
     all_name_indices = []
